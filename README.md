@@ -1,39 +1,30 @@
 # brutenis.net
 
-Personal website built with [Astro](https://astro.build), [Tailwind CSS v4](https://tailwindcss.com), and vanilla TypeScript. Features a yarn ball cursor that follows the mouse using Verlet rope physics, and an optional game mode where monsters attack your blog entries.
+My personal website built with [Astro](https://astro.build), [Tailwind CSS v4](https://tailwindcss.com), and TypeScript. Has a yarn ball cursor with Verlet rope physics and a fun little game mode where monsters attack the blog entries. You can try to defend against the monsters with the yarn ball, but it's quite hard!
 
-## Tech Stack
+![](./media/screenshot.png)
 
-- **Astro v6** - Static site generator
-- **Tailwind CSS v4** - Styling
-- **Vanilla TypeScript** - All interactivity (no React/Svelte/Vue)
-- **Canvas API** - Yarn cursor physics and game rendering
-- **GitHub Actions** - CI/CD, deploys via rsync to a Hetzner server
-
-## Getting Started
-
+## Setup
 ```sh
 npm install
-npm run dev      # Start dev server at localhost:4321
-npm run build    # Build for production to ./dist/
-npm run preview  # Preview the production build locally
+npm run dev      # localhost:4321
+npm run build
+npm run preview
 ```
 
-Requires Node.js >= 22.12.0.
+## Content
 
-## Content Architecture
-
-The site has four content collections, all defined in `src/content.config.ts`. Each uses a custom Astro loader that fetches content at build time — there are no local content files for projects, games, or CTF writeups.
+Four content collections defined in `src/content.config.ts`.
 
 ### Blog
 
-The blog has **two sources**, combined by a single loader (`src/lib/blog-loader.ts`):
+Two sources, combined by `src/lib/blog-loader.ts`:
 
 #### 1. Local Markdown files
 
-Write a `.md` file in `src/content/blog/`. The filename (without `.md`) becomes the URL slug.
+Drop a `.md` file in `src/content/blog/`. The filename becomes the slug.
 
-Frontmatter schema:
+Frontmatter:
 
 ```yaml
 ---
@@ -49,11 +40,9 @@ draft: false                  # optional, defaults to false (drafts are excluded
 Your markdown content here.
 ```
 
-The post will appear at `/blog/<filename>`.
-
 #### 2. GitHub repository READMEs
 
-Link a GitHub repo in `src/content.config.ts` under the `githubRepos` array. The repo's README is fetched at build time and rendered as a blog post.
+Add a repo to the `githubRepos` array in `src/content.config.ts`. The README is fetched at build time and rendered as a blog post.
 
 ```ts
 const blog = defineCollection({
@@ -73,20 +62,9 @@ const blog = defineCollection({
 });
 ```
 
-The loader automatically:
-- Fetches the README and rewrites relative image/link paths to absolute GitHub URLs
-- Pulls the repo description and language from the GitHub API
-- Converts bare GitHub video attachment URLs to `<video>` elements
-- Sets `source: "github"` and `githubUrl` on the post data
-
 ### Projects & Games
 
-Both collections use the same loader (`src/lib/github-loader.ts`) that parses entries from the [LiquidFun GitHub profile README](https://github.com/LiquidFun). Each `<a>` tag with a title and image in the relevant section becomes an entry.
-
-- **Projects** are pulled from the "My Projects" section
-- **Games** are pulled from the "My Games" section
-
-To add a new project or game, add an entry to the corresponding section in the [LiquidFun/LiquidFun](https://github.com/LiquidFun/LiquidFun) profile README using this format:
+Both collections are parsed from the [LiquidFun GitHub profile README](https://github.com/LiquidFun) by `src/lib/github-loader.ts`. To add a project or game, add an entry to the relevant section in the [LiquidFun/LiquidFun](https://github.com/LiquidFun/LiquidFun) profile README:
 
 ```html
 <a href="https://github.com/User/repo" title="Project Name - Description of the project">
@@ -94,19 +72,13 @@ To add a new project or game, add an entry to the corresponding section in the [
 </a>
 ```
 
-The loader will:
-- Download the thumbnail to `public/images/projects/` or `public/images/games/`
-- Fetch the repo's README as the detail page content
-- Pull metadata (language, creation date) from the GitHub API
-- Extract links (GitHub, Play Store, etc.) from the href
-
-Pages are rendered at `/projects/<slug>` and `/games/<slug>`.
+Pages are at `/projects/<slug>` and `/games/<slug>`.
 
 ### CTF Writeups
 
-CTF writeups are loaded from the [LiquidFun/CTF-Writeups](https://github.com/LiquidFun/CTF-Writeups) repository (`src/lib/ctf-loader.ts`). The repo is cloned/pulled at build time into `ctf-writeups/` (cached in CI).
+Loaded from [LiquidFun/CTF-Writeups](https://github.com/LiquidFun/CTF-Writeups) by `src/lib/ctf-loader.ts`, which clones/pulls the repo into `ctf-writeups/` at build time.
 
-Expected directory structure in the CTF repo:
+Directory structure:
 
 ```
 ctf-writeups/
@@ -146,34 +118,3 @@ Pushing to `main` triggers the GitHub Actions workflow (`.github/workflows/deplo
 4. Deploys `dist/` via rsync to the Hetzner server
 
 Required GitHub secrets: `HETZNER_HOST`, `HETZNER_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_PATH`.
-
-## Project Structure
-
-```
-src/
-  content.config.ts          # Collection schemas and loader config
-  content/blog/              # Local blog markdown files
-  lib/
-    blog-loader.ts           # Blog loader (local + GitHub)
-    github-loader.ts         # Projects/games loader (profile README)
-    ctf-loader.ts            # CTF writeups loader (git repo)
-  layouts/
-    BaseLayout.astro         # Root layout with canvases, nav, view transitions
-    BlogPostLayout.astro
-    ProjectLayout.astro
-  pages/
-    index.astro
-    about.astro
-    blog/
-    projects/
-    games/
-    ctf/
-  scripts/
-    yarn-cursor/             # Verlet rope physics + yarn ball renderer
-    yarn-game/               # WASD game mode with character + collectibles
-  components/
-ctf-writeups/                # Git submodule (LiquidFun/CTF-Writeups)
-public/
-  images/                    # Downloaded project/game thumbnails
-  ctf-assets/                # Copied CTF media (gitignored, generated at build)
-```
