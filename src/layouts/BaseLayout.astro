@@ -26,12 +26,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     <meta property="og:type" content="website" />
     <meta property="og:url" content={canonicalURL} />
 
-    <!-- Google Fonts -->
-    <link rel="preconnect" href="https://fonts.googleapis.com" />
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Patrick+Hand&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
-
-    <title>{title} | brutenis.net</title>
+<title>{title} | brutenis.net</title>
     <ClientRouter />
   </head>
   <body class="flex flex-col min-h-screen">
@@ -55,12 +50,12 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
       </div>
     </div>
 
-    <nav class="sticky top-0 z-50 bg-bg-cream/90 backdrop-blur-sm border-b-2 border-dashed border-yarn-coral/30" transition:persist="navbar">
-      <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+    <nav class="sticky top-0 z-50 bg-bg-cream/90 backdrop-blur-sm border-b-2 border-dashed border-yarn-coral/30">
+      <div class="max-w-5xl mx-auto px-4 py-1 flex flex-col items-center sm:flex-row sm:items-center sm:justify-between gap-0 sm:gap-0 sm:py-3">
         <a href="/" class="logo-link" id="animated-logo">
           brutenis.net
         </a>
-        <div class="flex gap-1 items-center">
+        <div class="flex gap-0 sm:gap-1 items-center flex-wrap justify-center sm:justify-start">
           <a href="/blog" class="nav-link">Blog</a>
           <a href="/projects" class="nav-link">Projects</a>
           <a href="/games" class="nav-link">Games</a>
@@ -141,6 +136,13 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     opacity: 0.8;
   }
 
+  @media (max-width: 639px) {
+    .nav-link {
+      font-size: 1rem;
+      padding: 0.25rem 0.5rem;
+    }
+  }
+
   .yarn-toggle {
     padding: 0.25rem 0.6rem;
     border: 2px dashed var(--color-yarn-coral);
@@ -179,6 +181,12 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     display: flex;
     align-items: center;
     gap: 0.75rem;
+  }
+
+  @media (hover: none) {
+    .game-hud {
+      display: none;
+    }
   }
 
   .canvas-greyed {

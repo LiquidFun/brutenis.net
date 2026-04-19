@@ -59,7 +59,8 @@ function drawLogo() {
   const totalWidth = letterWobbles.length > 0
     ? letterWobbles[letterWobbles.length - 1].baseX + ctx.measureText(TEXT[TEXT.length - 1]).width
     : 0;
-  const startX = (canvas.width - totalWidth) / 2;
+  const isMobile = window.matchMedia("(max-width: 639px)").matches;
+  const startX = isMobile ? (canvas.width - totalWidth) / 2 : 4;
   const y = canvas.height / 2;
 
   ctx.font = `bold ${FONT_SIZE}px Caveat, cursive`;

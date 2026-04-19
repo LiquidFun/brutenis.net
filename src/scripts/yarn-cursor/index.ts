@@ -11,7 +11,8 @@ let mouseY = -100;
 let lastTime = 0;
 let animId = 0;
 let initialized = false;
-let attackersEnabled = true;
+const isTouchDevice = window.matchMedia("(hover: none)").matches;
+let attackersEnabled = !isTouchDevice;
 
 // Expose yarn ball position (always available — yarn ball is always on)
 export function getYarnBallPosition(): { x: number; y: number } | null {
@@ -118,5 +119,12 @@ function init() {
   initialized = true;
 }
 
-document.addEventListener("astro:page-load", init);
+function hideHudOnMobile() {
+  if (!isTouchDevice) return;
+  const hud = document.getElementById("game-hud");
+  if (hud) hud.style.display = "none";
+}
+
+document.addEventListener("astro:page-load", () => { init(); hideHudOnMobile(); });
 init();
+hideHudOnMobile();
