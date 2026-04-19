@@ -1,4 +1,4 @@
-# brutenis.net
+# [brutenis.net](https://brutenis.net)
 
 My personal website built with [Astro](https://astro.build), [Tailwind CSS v4](https://tailwindcss.com), and TypeScript. Has a yarn ball cursor with Verlet rope physics and a fun little game mode where monsters attack the blog entries. You can try to defend against the monsters with the yarn ball, but it's quite hard!
 
