@@ -1,0 +1,65 @@
+---
+import BaseLayout from "./BaseLayout.astro";
+import TagPill from "@components/blog/TagPill.astro";
+import ProjectGallery from "@components/projects/ProjectGallery.astro";
+
+interface MediaItem {
+  type: "image" | "video";
+  src: string;
+  alt?: string;
+}
+
+interface Props {
+  title: string;
+  description: string;
+  date: Date;
+  tags: string[];
+  links?: Record<string, string | undefined>;
+  media?: MediaItem[];
+  backLink: string;
+  backLabel: string;
+}
+
+const { title, description, date, tags, links = {}, media = [], backLink, backLabel } = Astro.props;
+
+const formattedDate = date.toLocaleDateString("en-US", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+
+const linkEntries = Object.entries(links).filter(([, v]) => v);
+---
+
+<BaseLayout title={title} description={description}>
+  <article>
+    <header class="prose mb-8 post-header">
+      <a href={backLink} class="text-text-muted hover:text-yarn-coral transition-colors text-sm mb-4 inline-block">
+        &larr; {backLabel}
+      </a>
+      <h1 class="text-4xl md:text-5xl font-heading font-bold text-text-charcoal mb-2">
+        {title}
+      </h1>
+      <div class="flex items-center gap-3 text-text-muted text-sm mb-4">
+        <time>{formattedDate}</time>
+        {linkEntries.map(([name, url]) => (
+          <a
+            href={url}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="hover:text-yarn-coral transition-colors"
+          >
+            {name}
+          </a>
+        ))}
+      </div>
+      <div class="flex flex-wrap gap-2">
+        {tags.map((tag) => <TagPill tag={tag} />)}
+      </div>
+    </header>
+    <ProjectGallery media={media} />
+    <div class="prose">
+      <slot />
+    </div>
+  </article>
+</BaseLayout>

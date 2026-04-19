@@ -1,0 +1,59 @@
+---
+import BaseLayout from "./BaseLayout.astro";
+import TagPill from "@components/blog/TagPill.astro";
+
+interface Props {
+  title: string;
+  description: string;
+  pubDate: Date;
+  updatedDate?: Date;
+  tags: string[];
+  githubUrl?: string;
+}
+
+const { title, description, pubDate, updatedDate, tags, githubUrl } = Astro.props;
+
+const formattedDate = pubDate.toLocaleDateString("en-US", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+const formattedUpdate = updatedDate?.toLocaleDateString("en-US", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+---
+
+<BaseLayout title={title} description={description}>
+  <article>
+    <header class="prose mb-8 post-header">
+      <a href="/blog" class="text-text-muted hover:text-yarn-coral transition-colors text-sm mb-4 inline-block">
+        &larr; Back to blog
+      </a>
+      <h1 class="text-4xl md:text-5xl font-heading font-bold text-text-charcoal mb-2">
+        {title}
+      </h1>
+      <div class="flex items-center gap-3 text-text-muted text-sm mb-4">
+        <time>{formattedDate}</time>
+        {formattedUpdate && <span>Updated: {formattedUpdate}</span>}
+        {githubUrl && (
+          <a
+            href={githubUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            class="hover:text-yarn-coral transition-colors"
+          >
+            GitHub
+          </a>
+        )}
+      </div>
+      <div class="flex flex-wrap gap-2">
+        {tags.map((tag) => <TagPill tag={tag} />)}
+      </div>
+    </header>
+    <div class="prose">
+      <slot />
+    </div>
+  </article>
+</BaseLayout>

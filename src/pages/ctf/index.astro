@@ -1,0 +1,79 @@
+---
+import BaseLayout from "@layouts/BaseLayout.astro";
+import { getCollection } from "astro:content";
+
+const writeups = await getCollection("ctf");
+
+// Group by event, sort events by year descending
+const grouped = new Map<string, typeof writeups>();
+for (const entry of writeups) {
+  const event = entry.data.event;
+  if (!grouped.has(event)) grouped.set(event, []);
+  grouped.get(event)!.push(entry);
+}
+
+const sortedEvents = [...grouped.entries()].sort((a, b) => {
+  const yearA = a[1][0]?.data.eventYear ?? 0;
+  const yearB = b[1][0]?.data.eventYear ?? 0;
+  return yearB - yearA;
+});
+---
+
+<BaseLayout title="CTF Writeups">
+  <h1 class="text-5xl font-heading font-bold text-yarn-blue mb-2">CTF Writeups</h1>
+  <p class="text-text-muted text-lg mb-8">
+    Solutions and writeups from CTF competitions with team "Never :q!"
+  </p>
+
+  {sortedEvents.map(([event, entries]) => (
+    <section class="mb-10">
+      <h2 class="text-3xl font-heading font-bold text-text-charcoal mb-4 border-b-2 border-dashed border-yarn-blue/30 pb-2">
+        {event}
+      </h2>
+      <div class="grid gap-3">
+        {entries.map((entry) => (
+          <a href={`/ctf/${entry.id}`} class="ctf-card block">
+            <div class="flex items-start justify-between gap-3">
+              <div>
+                <h3 class="text-lg font-heading font-bold text-text-charcoal">
+                  {entry.data.title}
+                </h3>
+                <p class="text-sm text-text-muted mt-1">{entry.data.description}</p>
+              </div>
+              <div class="flex flex-wrap gap-1.5 shrink-0">
+                {entry.data.tags.map((tag) => (
+                  <span class="ctf-tag">{tag}</span>
+                ))}
+              </div>
+            </div>
+          </a>
+        ))}
+      </div>
+    </section>
+  ))}
+</BaseLayout>
+
+<style>
+  .ctf-card {
+    padding: 1rem;
+    border: 2px dashed var(--color-yarn-blue);
+    border-radius: 0.75rem;
+    transition: all 0.2s;
+    background: white;
+    text-decoration: none;
+  }
+  .ctf-card:hover {
+    border-style: solid;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+  .ctf-tag {
+    display: inline-block;
+    padding: 0.1rem 0.5rem;
+    border: 1.5px dashed var(--color-yarn-blue);
+    border-radius: 9999px;
+    font-family: var(--font-heading);
+    font-size: 0.8rem;
+    color: var(--color-yarn-blue);
+  }
+</style>

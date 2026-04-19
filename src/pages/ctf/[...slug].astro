@@ -1,0 +1,38 @@
+---
+import BaseLayout from "@layouts/BaseLayout.astro";
+import TagPill from "@components/blog/TagPill.astro";
+import { getCollection, render } from "astro:content";
+
+export async function getStaticPaths() {
+  const writeups = await getCollection("ctf");
+  return writeups.map((entry) => ({
+    params: { slug: entry.id },
+    props: entry,
+  }));
+}
+
+const entry = Astro.props;
+const { Content } = await render(entry);
+---
+
+<BaseLayout title={entry.data.title} description={entry.data.description}>
+  <article>
+    <header class="prose mb-8 post-header">
+      <a href="/ctf" class="text-text-muted hover:text-yarn-blue transition-colors text-sm mb-4 inline-block">
+        &larr; Back to CTF writeups
+      </a>
+      <h1 class="text-4xl md:text-5xl font-heading font-bold text-text-charcoal mb-2">
+        {entry.data.title}
+      </h1>
+      <div class="text-text-muted text-sm mb-4">
+        {entry.data.event}
+      </div>
+      <div class="flex flex-wrap gap-2">
+        {entry.data.tags.map((tag) => <TagPill tag={tag} />)}
+      </div>
+    </header>
+    <div class="prose">
+      <Content />
+    </div>
+  </article>
+</BaseLayout>

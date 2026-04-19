@@ -1,0 +1,100 @@
+---
+import TagPill from "@components/blog/TagPill.astro";
+import { getTagColor } from "@lib/tag-colors";
+
+interface Props {
+  title: string;
+  description: string;
+  date: Date;
+  tags: string[];
+  slug: string;
+  basePath: string;
+  thumbnail?: string;
+  links?: { github?: string; live?: string; play?: string; itch?: string; docs?: string };
+}
+
+const { title, description, date, tags, slug, basePath, thumbnail, links = {} } = Astro.props;
+
+const formattedDate = date.toLocaleDateString("en-US", {
+  year: "numeric",
+  month: "short",
+});
+
+const borderColor = tags.length > 0 ? getTagColor(tags[0]) : "var(--color-yarn-purple)";
+const linkEntries = Object.entries(links).filter(([, v]) => v);
+---
+
+<article class="project-card clickable-card" style={`--card-color: ${borderColor}; cursor: pointer`}>
+  <div class="project-card-inner">
+    <div class="project-card-content">
+      <a href={`${basePath}/${slug}`} class="card-main-link mb-2">
+        <h2 class="text-xl font-heading font-bold text-text-charcoal transition-colors hover:text-yarn-purple">
+          {title}
+        </h2>
+      </a>
+      <time class="text-sm text-text-muted">{formattedDate}</time>
+      <p class="text-text-charcoal mt-2 mb-3 text-sm">{description}</p>
+      <div class="flex flex-wrap gap-2 mb-3">
+        {tags.map((tag) => <TagPill tag={tag} />)}
+      </div>
+      {linkEntries.length > 0 && (
+        <div class="flex gap-3 text-sm card-extra-links">
+          {linkEntries.map(([name, url]) => (
+            <a
+              href={url}
+              target="_blank"
+              rel="noopener noreferrer"
+              class="text-text-muted hover:text-yarn-coral transition-colors"
+            >
+              {name}
+            </a>
+          ))}
+        </div>
+      )}
+    </div>
+    {thumbnail && (
+      <div class="project-card-image">
+        <img src={thumbnail} alt="" loading="lazy" />
+      </div>
+    )}
+  </div>
+</article>
+
+<style>
+  .project-card {
+    padding: 1.25rem;
+    border: 2px dashed var(--card-color);
+    border-radius: 0.75rem;
+    transition: all 0.2s;
+    background: white;
+  }
+  .project-card:hover {
+    border-style: solid;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+  .project-card-inner {
+    display: flex;
+    gap: 1rem;
+  }
+  .project-card-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .project-card-image {
+    flex-shrink: 0;
+    max-width: 200px;
+    border-radius: 0.5rem;
+    align-self: center;
+  }
+  .project-card-image img {
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+  }
+  @media (max-width: 640px) {
+    .project-card-image {
+      display: none;
+    }
+  }
+</style>

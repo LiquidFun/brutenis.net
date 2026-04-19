@@ -1,0 +1,242 @@
+---
+import "@styles/global.css";
+import { ClientRouter } from "astro:transitions";
+
+interface Props {
+  title: string;
+  description?: string;
+}
+
+const { title, description = "Brutenis's personal website - a yarn-tangled corner of the internet" } = Astro.props;
+const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+---
+
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="generator" content={Astro.generator} />
+    <meta name="description" content={description} />
+    <link rel="canonical" href={canonicalURL} />
+
+    <!-- Open Graph -->
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content={canonicalURL} />
+
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=Patrick+Hand&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+
+    <title>{title} | brutenis.net</title>
+    <ClientRouter />
+  </head>
+  <body class="flex flex-col min-h-screen">
+    <!-- Game canvas (behind content) -->
+    <canvas id="yarn-game-canvas" class="yarn-canvas yarn-canvas-game" transition:persist="yarn-game-canvas"></canvas>
+    <!-- Cursor canvas (above content) -->
+    <canvas id="yarn-cursor-canvas" class="yarn-canvas yarn-canvas-cursor" transition:persist="yarn-cursor-canvas"></canvas>
+    <!-- Game HUD + attackers toggle -->
+    <div id="game-hud" class="game-hud" transition:persist="game-hud">
+      <span id="game-score-wrap" class="font-heading text-lg" style="display:none">Defended: <span id="game-score">0</span></span>
+      <button id="yarn-toggle" class="yarn-toggle">Attackers: ON</button>
+    </div>
+    <!-- Game over overlay -->
+    <div id="game-over-overlay" class="game-over-overlay" style="display:none" transition:persist="game-over-overlay">
+      <div class="game-over-box">
+        <h2 class="font-heading text-6xl font-bold text-yarn-coral mb-2">Game Over!</h2>
+        <p class="font-heading text-2xl text-text-charcoal mb-1">Defended <span id="game-over-score">0</span> attacks</p>
+        <p class="font-heading text-xl text-text-muted">Reached Level <span id="game-over-level">1</span></p>
+        <button id="try-again-btn" class="try-again-btn">Try Again</button>
+        <button id="disable-attackers-btn" class="disable-attackers-btn">Disable Attackers</button>
+      </div>
+    </div>
+
+    <nav class="sticky top-0 z-50 bg-bg-cream/90 backdrop-blur-sm border-b-2 border-dashed border-yarn-coral/30" transition:persist="navbar">
+      <div class="max-w-5xl mx-auto px-4 py-3 flex items-center justify-between">
+        <a href="/" class="logo-link" id="animated-logo">
+          brutenis.net
+        </a>
+        <div class="flex gap-1 items-center">
+          <a href="/blog" class="nav-link">Blog</a>
+          <a href="/projects" class="nav-link">Projects</a>
+          <a href="/games" class="nav-link">Games</a>
+          <a href="/ctf" class="nav-link">CTF</a>
+          <a href="/about" class="nav-link">About</a>
+        </div>
+      </div>
+    </nav>
+
+    <main class="flex-1 max-w-5xl mx-auto px-4 py-8 w-full">
+      <slot />
+    </main>
+
+    <footer class="border-t-2 border-dashed border-yarn-teal/30 mt-auto">
+      <div class="max-w-5xl mx-auto px-4 py-6 text-center text-text-muted text-sm">
+        <p class="font-heading text-lg">&copy; {new Date().getFullYear()} brutenis.net</p>
+        <div class="flex justify-center gap-4 mt-2">
+          <a href="https://github.com/LiquidFun" class="hover:text-yarn-coral transition-colors">GitHub</a>
+          <a href="/rss.xml" class="hover:text-yarn-coral transition-colors">RSS</a>
+        </div>
+        <p class="mt-3 text-xs text-text-muted/50 font-heading">Use the yarn ball to defend the blog entries</p>
+      </div>
+    </footer>
+
+    <script>
+      import "@scripts/yarn-cursor/index";
+      import "@scripts/yarn-game/index";
+      import "@scripts/animated-logo";
+      import "@scripts/clickable-cards";
+    </script>
+  </body>
+</html>
+
+<style>
+  .nav-link {
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.5rem;
+    font-family: var(--font-heading);
+    font-size: 1.25rem;
+    color: var(--color-text-charcoal);
+    transition: all 0.2s;
+  }
+  .nav-link:hover {
+    background-color: var(--color-bg-warm);
+    color: var(--color-yarn-coral);
+  }
+
+  .yarn-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  .yarn-canvas-game {
+    z-index: 1;
+    pointer-events: none;
+  }
+
+  .yarn-canvas-cursor {
+    z-index: 10;
+    pointer-events: none;
+  }
+
+  .logo-link {
+    font-family: var(--font-heading);
+    font-size: 1.875rem;
+    font-weight: 700;
+    text-decoration: none;
+    transition: opacity 0.2s;
+    display: inline-block;
+    width: 264px;
+    height: 53px;
+    color: transparent;
+  }
+  .logo-link:hover {
+    opacity: 0.8;
+  }
+
+  .yarn-toggle {
+    padding: 0.25rem 0.6rem;
+    border: 2px dashed var(--color-yarn-coral);
+    border-radius: 0.5rem;
+    font-family: var(--font-heading);
+    font-size: 0.85rem;
+    color: var(--color-yarn-coral);
+    background: transparent;
+    cursor: pointer;
+    transition: all 0.2s;
+    margin-left: 0.25rem;
+  }
+  .yarn-toggle:hover {
+    background: var(--color-yarn-coral);
+    color: white;
+  }
+  .yarn-toggle-off {
+    border-color: var(--color-text-muted);
+    color: var(--color-text-muted);
+  }
+  .yarn-toggle-off:hover {
+    background: var(--color-text-muted);
+    color: white;
+  }
+
+  .game-hud {
+    position: fixed;
+    top: 1rem;
+    right: 1rem;
+    z-index: 100;
+    background: rgba(255, 255, 255, 0.9);
+    backdrop-filter: blur(4px);
+    padding: 0.375rem 0.75rem;
+    border-radius: 0.75rem;
+    border: 2px dashed var(--color-yarn-teal);
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+
+  .canvas-greyed {
+    filter: grayscale(0.8) brightness(0.6);
+    transition: filter 0.5s ease;
+  }
+
+  .game-over-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(45, 52, 54, 0.5);
+    backdrop-filter: blur(3px);
+  }
+  .game-over-box {
+    text-align: center;
+    background: var(--color-bg-cream);
+    padding: 2.5rem 3rem;
+    border-radius: 1rem;
+    border: 3px dashed var(--color-yarn-coral);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+  }
+  .try-again-btn,
+  .disable-attackers-btn {
+    margin-top: 0.5rem;
+    padding: 0.6rem 2rem;
+    border: 2px solid transparent;
+    border-radius: 0.75rem;
+    font-family: var(--font-heading);
+    font-size: 1.4rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .try-again-btn {
+    margin-top: 1rem;
+    background: var(--color-yarn-coral);
+    color: white;
+    border-color: var(--color-yarn-coral);
+  }
+  .try-again-btn:hover {
+    background: var(--color-accent-hover);
+    border-color: var(--color-accent-hover);
+    transform: translateY(-2px);
+  }
+  .disable-attackers-btn {
+    background: transparent;
+    color: var(--color-text-muted);
+    border-color: var(--color-text-muted);
+    border-style: dashed;
+  }
+  .disable-attackers-btn:hover {
+    background: var(--color-text-muted);
+    color: white;
+    transform: translateY(-2px);
+  }
+</style>

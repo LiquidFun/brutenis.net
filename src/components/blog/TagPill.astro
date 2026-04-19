@@ -1,0 +1,53 @@
+---
+interface Props {
+  tag: string;
+  active?: boolean;
+}
+
+const { tag, active = false } = Astro.props;
+
+const yarnColors = [
+  "var(--color-yarn-coral)",
+  "var(--color-yarn-teal)",
+  "var(--color-yarn-yellow)",
+  "var(--color-yarn-purple)",
+  "var(--color-yarn-pink)",
+  "var(--color-yarn-blue)",
+  "var(--color-yarn-green)",
+  "var(--color-yarn-orange)",
+];
+
+// Deterministic color from tag name
+let hash = 0;
+for (let i = 0; i < tag.length; i++) {
+  hash = tag.charCodeAt(i) + ((hash << 5) - hash);
+}
+const color = yarnColors[Math.abs(hash) % yarnColors.length];
+---
+
+<a
+  href={`/blog/tag/${tag}`}
+  class:list={["tag-pill", { active }]}
+  style={`--tag-color: ${color}`}
+>
+  {tag}
+</a>
+
+<style>
+  .tag-pill {
+    display: inline-block;
+    padding: 0.15rem 0.6rem;
+    border: 2px dashed var(--tag-color);
+    border-radius: 9999px;
+    font-family: var(--font-heading);
+    font-size: 0.95rem;
+    color: var(--tag-color);
+    transition: all 0.2s;
+    text-decoration: none;
+  }
+  .tag-pill:hover,
+  .tag-pill.active {
+    background-color: var(--tag-color);
+    color: white;
+  }
+</style>

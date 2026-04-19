@@ -1,0 +1,29 @@
+---
+import BaseLayout from "@layouts/BaseLayout.astro";
+import ProjectCard from "@components/projects/ProjectCard.astro";
+import { getCollection } from "astro:content";
+
+const games = (await getCollection("games"))
+  .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
+
+const featured = games.filter((g) => g.data.featured);
+const rest = games.filter((g) => !g.data.featured);
+---
+
+<BaseLayout title="Games">
+  <h1 class="text-5xl font-heading font-bold text-yarn-green mb-8">Games</h1>
+  <div class="grid gap-4 md:grid-cols-2">
+    {[...featured, ...rest].map((game) => (
+      <ProjectCard
+        title={game.data.title}
+        description={game.data.description}
+        date={game.data.date}
+        tags={game.data.tags}
+        slug={game.id}
+        basePath="/games"
+        links={game.data.links}
+        thumbnail={game.data.thumbnail}
+      />
+    ))}
+  </div>
+</BaseLayout>

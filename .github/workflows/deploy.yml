@@ -1,0 +1,37 @@
+name: Deploy to Hetzner
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache CTF writeups
+        uses: actions/cache@v4
+        with:
+          path: ctf-writeups
+          key: ctf-writeups-${{ github.run_id }}
+          restore-keys: ctf-writeups-
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - name: Deploy via rsync
+        uses: burnett01/rsync-deployments@7.0.1
+        with:
+          switches: -avz --delete
+          path: dist/
+          remote_path: ${{ secrets.DEPLOY_PATH }}
+          remote_host: ${{ secrets.HETZNER_HOST }}
+          remote_user: ${{ secrets.HETZNER_USER }}
+          remote_key: ${{ secrets.DEPLOY_SSH_KEY }}

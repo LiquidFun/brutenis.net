@@ -1,0 +1,84 @@
+---
+import TagPill from "./TagPill.astro";
+import { getTagColor } from "@lib/tag-colors";
+
+interface Props {
+  title: string;
+  description: string;
+  pubDate: Date;
+  tags: string[];
+  slug: string;
+  heroImage?: string;
+}
+
+const { title, description, pubDate, tags, slug, heroImage } = Astro.props;
+
+const formattedDate = pubDate.toLocaleDateString("en-US", {
+  year: "numeric",
+  month: "long",
+  day: "numeric",
+});
+
+const borderColor = tags.length > 0 ? getTagColor(tags[0]) : "var(--color-yarn-coral)";
+---
+
+<article class="post-card clickable-card" style={`--card-color: ${borderColor}; cursor: pointer`} data-tags={tags.join(",")}>
+  <div class="post-card-inner">
+    <div class="post-card-content">
+      <a href={`/blog/${slug}`} class="card-main-link">
+        <h2 class="text-2xl font-heading font-bold text-text-charcoal mb-1">
+          {title}
+        </h2>
+      </a>
+      <time class="text-sm text-text-muted">{formattedDate}</time>
+      <p class="text-text-charcoal mt-2 mb-3">{description}</p>
+      <div class="flex flex-wrap gap-2">
+        {tags.map((tag) => <TagPill tag={tag} />)}
+      </div>
+    </div>
+    {heroImage && (
+      <div class="post-card-image">
+        <img src={heroImage} alt="" loading="lazy" />
+      </div>
+    )}
+  </div>
+</article>
+
+<style>
+  .post-card {
+    padding: 1.25rem;
+    border: 2px dashed var(--card-color);
+    border-radius: 0.75rem;
+    transition: all 0.2s;
+    background: white;
+  }
+  .post-card:hover {
+    border-style: solid;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+  }
+  .post-card-inner {
+    display: flex;
+    gap: 1rem;
+  }
+  .post-card-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .post-card-image {
+    flex-shrink: 0;
+    max-width: 200px;
+    border-radius: 0.5rem;
+    align-self: center;
+  }
+  .post-card-image img {
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+  }
+  @media (max-width: 640px) {
+    .post-card-image {
+      display: none;
+    }
+  }
+</style>

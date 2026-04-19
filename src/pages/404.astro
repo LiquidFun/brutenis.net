@@ -1,0 +1,31 @@
+---
+import BaseLayout from "@layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="404 - Page Not Found">
+  <div class="flex flex-col items-center justify-center py-20 text-center">
+    <div class="text-8xl mb-4" aria-hidden="true">
+      <svg width="120" height="120" viewBox="0 0 120 120" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <!-- Lost yarn ball -->
+        <circle cx="60" cy="60" r="40" fill="#ff6b6b" opacity="0.8"/>
+        <path d="M30 50 Q60 35 90 50" stroke="#fff" stroke-width="3" fill="none" opacity="0.5"/>
+        <path d="M28 65 Q60 50 92 65" stroke="#fff" stroke-width="3" fill="none" opacity="0.4"/>
+        <!-- Sad eyes -->
+        <circle cx="48" cy="52" r="6" fill="white"/>
+        <circle cx="72" cy="52" r="6" fill="white"/>
+        <circle cx="49" cy="54" r="3" fill="#2d3436"/>
+        <circle cx="73" cy="54" r="3" fill="#2d3436"/>
+        <!-- Sad mouth -->
+        <path d="M48 72 Q60 65 72 72" stroke="#2d3436" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+        <!-- Trailing string -->
+        <path d="M85 35 Q100 20 110 30 Q115 40 105 45" stroke="#ff6b6b" stroke-width="3" fill="none" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <h1 class="text-6xl font-heading font-bold text-yarn-coral mb-4">404</h1>
+    <p class="text-xl text-text-muted mb-2">This yarn ball rolled somewhere it shouldn't have.</p>
+    <p class="text-text-muted mb-8">The page you're looking for doesn't exist.</p>
+    <a href="/" class="inline-block px-6 py-3 bg-yarn-coral text-white rounded-xl font-heading text-xl hover:bg-accent-hover transition-colors">
+      Roll back home
+    </a>
+  </div>
+</BaseLayout>
