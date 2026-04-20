@@ -101,14 +101,27 @@ function syncButton() {
   const hud = document.getElementById("game-hud");
   if (!hud) return;
   hud.classList.toggle("game-hud-collapsed", !attackersEnabled);
+
+  // Reset HUD contents when toggling
+  const label = document.getElementById("hud-disable-label");
+  const separator = document.getElementById("hud-separator");
+  const scoreWrap = document.getElementById("game-score-wrap");
+  if (attackersEnabled) {
+    // Reset to initial "Disable Game" state; updateHUD() will take over
+    if (label) label.style.display = "";
+    if (separator) separator.style.display = "none";
+    if (scoreWrap) scoreWrap.style.display = "none";
+  }
 }
 
+let hudListenerAttached = false;
 function attachButton() {
   const hud = document.getElementById("game-hud");
-  if (hud) {
+  if (hud && !hudListenerAttached) {
     hud.addEventListener("click", () => {
       setAttackersEnabled(!attackersEnabled);
     });
+    hudListenerAttached = true;
   }
 
   syncButton();
