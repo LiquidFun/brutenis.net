@@ -22,5 +22,8 @@
     "marked": "^18.0.2",
     "remark-gfm": "^4.0.1",
     "tailwindcss": "^4.2.2"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^2.3.0"
   }
 }

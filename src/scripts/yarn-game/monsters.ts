@@ -199,7 +199,12 @@ export class MonsterManager {
   levelUpTimer: number = 0;
   gameOver: boolean = false;
   paused: boolean = false;
+  private mobile: boolean;
   private levelThresholds = [5, 15, 30, 50, 80, 120, 170, 230, 300];
+
+  constructor() {
+    this.mobile = window.matchMedia("(hover: none)").matches;
+  }
 
   private getAliveCards(): Element[] {
     const destroyed = getDestroyedSet();
@@ -412,10 +417,15 @@ export class MonsterManager {
 
     if (this.engaged) {
       this.engageTimer += dt;
-      this.maxMonsters = Math.min(18, (2 + this.level) + Math.floor(this.engageTimer / 6));
-      this.spawnInterval = Math.max(0.25, (1.2 / this.level) - this.engageTimer * 0.02);
+      if (this.mobile) {
+        this.maxMonsters = Math.min(6, 2 + Math.floor((this.level - 1) * 0.7) + Math.floor(this.engageTimer / 15));
+        this.spawnInterval = Math.max(0.8, (2.2 / this.level) - this.engageTimer * 0.008);
+      } else {
+        this.maxMonsters = Math.min(18, (2 + this.level) + Math.floor(this.engageTimer / 6));
+        this.spawnInterval = Math.max(0.25, (1.2 / this.level) - this.engageTimer * 0.02);
+      }
     } else {
-      this.maxMonsters = 2 + this.level;
+      this.maxMonsters = this.mobile ? 2 + Math.floor((this.level - 1) * 0.7) : 2 + this.level;
     }
 
     if (this.spawnTimer > this.spawnInterval) {
@@ -424,7 +434,9 @@ export class MonsterManager {
       for (let i = 0; i < toSpawn; i++) this.spawn();
     }
 
-    const speedMult = 1 + (this.level - 1) * 0.5;
+    const speedMult = this.mobile
+      ? 0.6 + (this.level - 1) * 0.25
+      : 1 + (this.level - 1) * 0.5;
 
     for (const m of this.monsters) {
       if (!m.alive) continue;
@@ -473,7 +485,8 @@ export class MonsterManager {
           const shake = Math.sin(m.eatingTimer * 25) * (m.isBig ? 5 : 3);
           (m.targetEl as HTMLElement).style.transform = `translateX(${shake}px)`;
           const dmgMult = m.isBig ? 1.5 : 1;
-          this.damageCard(m.targetEl, DAMAGE_PER_SECOND * dmgMult * dt, m);
+          const mobileDmg = this.mobile ? 0.5 : 1;
+          this.damageCard(m.targetEl, DAMAGE_PER_SECOND * dmgMult * mobileDmg * dt, m);
           if (Math.random() < dt * 8) {
             for (let i = 0; i < 2; i++) {
               const a = Math.random() * Math.PI * 2;

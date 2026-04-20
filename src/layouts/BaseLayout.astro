@@ -36,8 +36,11 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     <canvas id="yarn-cursor-canvas" class="yarn-canvas yarn-canvas-cursor" transition:persist="yarn-cursor-canvas"></canvas>
     <!-- Game HUD + attackers toggle -->
     <div id="game-hud" class="game-hud" transition:persist="game-hud">
-      <span id="game-score-wrap" class="font-heading text-lg" style="display:none">Defended: <span id="game-score">0</span></span>
-      <button id="yarn-toggle" class="yarn-toggle">Attackers: ON</button>
+      <span class="hud-sword">&#x2694;</span>
+      <span id="hud-disable-label" class="font-heading text-lg hud-label">Disable Game</span>
+      <span id="hud-separator" class="hud-separator" style="display:none">|</span>
+      <span id="game-score-wrap" class="font-heading text-lg hud-score" style="display:none">Defended: <span id="game-score">0</span></span>
+      <span class="hud-dismiss">&times;</span>
     </div>
     <!-- Game over overlay -->
     <div id="game-over-overlay" class="game-over-overlay" style="display:none" transition:persist="game-over-overlay">
@@ -47,6 +50,17 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
         <p class="font-heading text-xl text-text-muted">Reached Level <span id="game-over-level">1</span></p>
         <button id="try-again-btn" class="try-again-btn">Try Again</button>
         <button id="disable-attackers-btn" class="disable-attackers-btn">Disable Attackers</button>
+      </div>
+    </div>
+    <!-- Gyro permission overlay (iOS mobile only) -->
+    <div id="gyro-permission-overlay" class="game-over-overlay" style="display:none" transition:persist="gyro-permission-overlay">
+      <div class="gyro-permission-box">
+        <p class="font-heading text-2xl text-text-charcoal mb-3">Tilt to play!</p>
+        <p class="font-body text-text-muted mb-4">
+          Tilt your phone to bounce the yarn ball and defend your blog posts from monsters.
+        </p>
+        <button id="gyro-grant-btn" class="try-again-btn">Enable Gyroscope</button>
+        <button id="gyro-skip-btn" class="disable-attackers-btn">No thanks</button>
       </div>
     </div>
 
@@ -112,12 +126,12 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
   }
 
   .yarn-canvas-game {
-    z-index: 1;
+    z-index: 60;
     pointer-events: none;
   }
 
   .yarn-canvas-cursor {
-    z-index: 10;
+    z-index: 61;
     pointer-events: none;
   }
 
@@ -143,50 +157,81 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     }
   }
 
-  .yarn-toggle {
-    padding: 0.25rem 0.6rem;
-    border: 2px dashed var(--color-yarn-coral);
-    border-radius: 0.5rem;
-    font-family: var(--font-heading);
-    font-size: 0.85rem;
+  .hud-sword {
+    font-size: 1.1rem;
+    line-height: 1;
     color: var(--color-yarn-coral);
-    background: transparent;
-    cursor: pointer;
-    transition: all 0.2s;
-    margin-left: 0.25rem;
   }
-  .yarn-toggle:hover {
-    background: var(--color-yarn-coral);
-    color: white;
-  }
-  .yarn-toggle-off {
-    border-color: var(--color-text-muted);
+
+  .hud-label {
     color: var(--color-text-muted);
   }
-  .yarn-toggle-off:hover {
-    background: var(--color-text-muted);
-    color: white;
+
+  .hud-separator {
+    color: var(--color-text-muted);
+    opacity: 0.4;
+  }
+
+  .hud-score {
+    color: var(--color-text-charcoal);
+  }
+
+  .hud-dismiss {
+    color: var(--color-text-muted);
+    font-size: 1.1rem;
+    line-height: 1;
+    margin-left: 0.1rem;
+    opacity: 0.5;
   }
 
   .game-hud {
     position: fixed;
-    top: 1rem;
-    right: 1rem;
+    top: calc(100dvh - 5.5rem);
+    left: 50%;
+    transform: translateX(-50%);
     z-index: 100;
-    background: rgba(255, 255, 255, 0.9);
+    background: rgba(255, 255, 255, 0.92);
     backdrop-filter: blur(4px);
-    padding: 0.375rem 0.75rem;
-    border-radius: 0.75rem;
-    border: 2px dashed var(--color-yarn-teal);
+    padding: 0.5rem 1.2rem;
+    border-radius: 2rem;
+    border: none;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.1);
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.5rem;
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+    transition: top 0.5s ease, left 0.5s ease, transform 0.5s ease,
+                padding 0.3s ease, border-radius 0.3s ease,
+                gap 0.3s ease, background 0.3s ease, box-shadow 0.3s ease;
   }
 
-  @media (hover: none) {
-    .game-hud {
-      display: none;
-    }
+  .game-hud-collapsed {
+    top: 0.35rem;
+    left: 0.5rem;
+    transform: none;
+    padding: 0;
+    border-radius: 50%;
+    background: var(--color-yarn-coral);
+    box-shadow: 0 2px 8px rgba(255, 107, 107, 0.4);
+    width: 2.5rem;
+    height: 2.5rem;
+    justify-content: center;
+    gap: 0;
+    cursor: pointer;
+  }
+
+  .game-hud-collapsed .hud-sword {
+    color: white;
+    font-size: 1.3rem;
+  }
+
+  .game-hud-collapsed .hud-label,
+  .game-hud-collapsed .hud-separator,
+  .game-hud-collapsed .hud-score,
+  .game-hud-collapsed .hud-dismiss {
+    display: none;
   }
 
   .canvas-greyed {
@@ -246,5 +291,15 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     background: var(--color-text-muted);
     color: white;
     transform: translateY(-2px);
+  }
+
+  .gyro-permission-box {
+    text-align: center;
+    background: var(--color-bg-cream);
+    padding: 2rem 2.5rem;
+    border-radius: 1rem;
+    border: 3px dashed var(--color-yarn-teal);
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.2);
+    max-width: 85vw;
   }
 </style>
