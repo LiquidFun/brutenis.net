@@ -40,6 +40,7 @@
     font-size: 120%;
     scroll-behavior: smooth;
     background-color: var(--color-bg-cream);
+    overflow-x: hidden;
   }
 
   body {

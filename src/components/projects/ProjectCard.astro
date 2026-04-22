@@ -32,25 +32,26 @@ const linkEntries = Object.entries(links).filter(([, v]) => v);
           {title}
         </h2>
       </a>
-      <time class="text-sm text-text-muted">{formattedDate}</time>
-      <p class="text-text-charcoal mt-2 mb-3 text-sm">{description}</p>
-      <div class="flex flex-wrap gap-2 mb-3">
-        {tags.map((tag) => <TagPill tag={tag} />)}
-      </div>
-      {linkEntries.length > 0 && (
-        <div class="flex gap-3 text-sm card-extra-links">
-          {linkEntries.map(([name, url]) => (
+      <div class="flex items-center gap-2 text-sm text-text-muted">
+        <time>{formattedDate}</time>
+        {linkEntries.length > 0 && linkEntries.map(([name, url]) => (
+          <Fragment>
+            <span class="opacity-50">&middot;</span>
             <a
               href={url}
               target="_blank"
               rel="noopener noreferrer"
-              class="text-text-muted hover:text-yarn-coral transition-colors"
+              class="hover:text-yarn-coral transition-colors card-extra-links"
             >
               {name}
             </a>
-          ))}
-        </div>
-      )}
+          </Fragment>
+        ))}
+      </div>
+      <p class="text-text-charcoal mt-2 mb-3 text-sm">{description}</p>
+      <div class="flex flex-wrap gap-2 mb-3">
+        {tags.map((tag) => <TagPill tag={tag} />)}
+      </div>
     </div>
     {thumbnail && (
       <div class="project-card-image">
