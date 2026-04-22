@@ -12,6 +12,7 @@ interface ParsedEntry {
   description: string;
   imgUrl: string;
   repo: string | null; // owner/repo extracted from github href, null for non-github links
+  playUrl: string | null; // data-play attribute for embeddable games
 }
 
 /** Parse the profile README HTML to extract project/game entries between two h2 headings */
@@ -27,14 +28,15 @@ function parseSection(readmeHtml: string, sectionTitle: string): ParsedEntry[] {
 
   // Extract all <a> tags with title and img
   const entryRegex =
-    /<a\s+href="([^"]+)"\s+title="([^"]+)"[^>]*>\s*<img\s+src="([^"]+)"[^>]*>\s*<\/a>/gi;
+    /<a\s+href="([^"]+)"\s+title="([^"]+)"([^>]*)>\s*<img\s+src="([^"]+)"[^>]*>\s*<\/a>/gi;
   const entries: ParsedEntry[] = [];
   let match;
 
   while ((match = entryRegex.exec(sectionHtml)) !== null) {
     const href = match[1];
     const titleAttr = match[2];
-    const imgUrl = match[3];
+    const extraAttrs = match[3];
+    const imgUrl = match[4];
 
     // Parse title: "Name - description | team info" or "Name - description"
     const titleParts = titleAttr.split(" - ");
@@ -47,12 +49,17 @@ function parseSection(readmeHtml: string, sectionTitle: string): ParsedEntry[] {
     );
     const repo = repoMatch ? repoMatch[1].replace(/\/$/, "") : null;
 
+    // Extract data-play attribute
+    const playMatch = extraAttrs.match(/data-play="([^"]+)"/);
+    const playUrl = playMatch ? playMatch[1] : null;
+
     entries.push({
       href,
       title: name,
       description: rest || name,
       imgUrl,
       repo,
+      playUrl,
     });
   }
 
@@ -260,6 +267,9 @@ export function githubProfileLoader(options: {
           } else {
             links.live = entry.href;
           }
+        }
+        if (entry.playUrl) {
+          links.play = entry.playUrl;
         }
 
         const fallbackHtml = description

@@ -57,6 +57,7 @@ const linkEntries = Object.entries(links).filter(([, v]) => v);
         {tags.map((tag) => <TagPill tag={tag} />)}
       </div>
     </header>
+    <slot name="embed" />
     <ProjectGallery media={media} />
     <div class="prose">
       <slot />
