@@ -145,7 +145,7 @@ interface Monster {
   colorIdx: number; wingPhase: number;
   alive: boolean; spawnAnim: number;
   eatingTimer: number; targetEl: Element | null;
-  hp: number; isBig: boolean; flashTimer: number;
+  hp: number; isBig: boolean; isHuge: boolean; flashTimer: number;
   id: string; // unique id for crack tree association
 }
 
@@ -200,16 +200,56 @@ export class MonsterManager {
   gameOver: boolean = false;
   paused: boolean = false;
   private mobile: boolean;
-  private levelThresholds = [5, 15, 30, 50, 80, 120, 170, 230, 300];
+  private levelThresholds = [
+    5, 15, 30, 50, 80, 120, 170, 230, 300,  // levels 2–10
+    380, 470, 570, 680, 800, 930, 1070, 1220, 1380, 1550, // levels 11–20
+    1740, 1950, 2180, 2430, 2700, 3000, 3330, 3690, 4080, 4500, // levels 21–30
+    4960, 5460, 6000, 6600, 7260, 7980, 8770, 9630, 10570, 11600, // levels 31–40
+    12730, 13970, 15330, 16820, 18450, 20240, 22200, 24350, 26700, // levels 41–49
+  ];
 
   constructor() {
     this.mobile = window.matchMedia("(hover: none)").matches;
   }
 
-  private getAliveCards(): Element[] {
+  getAliveCards(): Element[] {
     const destroyed = getDestroyedSet();
     return [...document.querySelectorAll(".post-card, .project-card, .ctf-card")]
       .filter(el => !destroyed.has(cardKey(el)));
+  }
+
+  cardKey(el: Element): string {
+    return cardKey(el);
+  }
+
+  getDamage(key: string): number {
+    return damageMap.get(key) || 0;
+  }
+
+  setDamage(key: string, value: number) {
+    if (value <= 0) {
+      damageMap.delete(key);
+    } else {
+      damageMap.set(key, value);
+    }
+  }
+
+  refreshCardVisual(el: Element, dmg: number, maxHP: number) {
+    const html = el as HTMLElement;
+    const key = cardKey(el);
+    if (dmg <= 0) {
+      html.style.filter = "";
+      html.classList.remove("card-cracked");
+      const overlay = html.querySelector(".card-crack-overlay");
+      if (overlay) overlay.remove();
+      cardCracks.delete(key);
+    } else {
+      const pct = dmg / maxHP;
+      const gs = pct * 0.85;
+      const br = 1 - pct * 0.3;
+      html.style.filter = `grayscale(${gs.toFixed(2)}) brightness(${br.toFixed(2)})`;
+      if (pct > 0.05 && cardCracks.has(key)) applyCrackOverlay(el, pct);
+    }
   }
 
   private findTarget(): { x: number; y: number; t: number; el: Element } | null {
@@ -240,9 +280,23 @@ export class MonsterManager {
     if (!target) return;
 
     const canSpawnBig = this.level >= 6;
-    const isBig = canSpawnBig && Math.random() < 0.25;
-    const size = isBig ? 35 + Math.random() * 10 : 20 + Math.random() * 8;
-    const hp = isBig ? 2 + Math.floor((this.level - 5) / 2) : 1;
+    const canSpawnHuge = this.level >= 10;
+    const roll = Math.random();
+    const isHuge = canSpawnHuge && roll < 0.15;
+    const isBig = !isHuge && canSpawnBig && roll < 0.40; // 25% big (0.15–0.40)
+
+    let size: number, hp: number;
+    if (isHuge) {
+      size = 50 + Math.random() * 15;
+      hp = 5 + Math.floor((this.level - 9) / 2) * 2;
+    } else if (isBig) {
+      size = 35 + Math.random() * 10;
+      hp = 2 + Math.floor((this.level - 5) / 2);
+    } else {
+      size = 20 + Math.random() * 8;
+      hp = 1;
+    }
+
     const pos = this.spawnOffScreen();
 
     this.monsters.push({
@@ -252,7 +306,7 @@ export class MonsterManager {
       colorIdx: Math.floor(Math.random() * MONSTER_COLORS.length),
       wingPhase: Math.random() * Math.PI * 2,
       alive: true, spawnAnim: 0, eatingTimer: 0, targetEl: target.el,
-      hp, isBig, flashTimer: 0,
+      hp, isBig: isBig || isHuge, isHuge, flashTimer: 0,
       id: `m${monsterIdCounter++}`,
     });
   }
@@ -265,7 +319,8 @@ export class MonsterManager {
       const dy = m.y - ballY;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < m.hitRadius + ballRadius) {
-        m.hp--;
+        const dmgMul = (window as any).__upgradeDamageMultiplier;
+        m.hp -= dmgMul ? dmgMul() : 1;
         const nx = dist > 0 ? dx / dist : 0;
         const ny = dist > 0 ? dy / dist : -1;
 
@@ -275,7 +330,7 @@ export class MonsterManager {
           this.score++;
           hits++;
           const c = MONSTER_COLORS[m.colorIdx];
-          const count = m.isBig ? 28 : 18;
+          const count = m.isHuge ? 40 : m.isBig ? 28 : 18;
           for (let i = 0; i < count; i++) {
             const spread = (Math.random() - 0.5) * Math.PI * 0.8;
             const angle = Math.atan2(ny, nx) + spread;
@@ -285,13 +340,13 @@ export class MonsterManager {
               x: m.x + (Math.random() - 0.5) * m.size * 0.5,
               y: m.y + (Math.random() - 0.5) * m.size * 0.5,
               vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-              life, maxLife: life, size: m.isBig ? 3 + Math.random() * 6 : 2 + Math.random() * 5,
+              life, maxLife: life, size: m.isHuge ? 4 + Math.random() * 8 : m.isBig ? 3 + Math.random() * 6 : 2 + Math.random() * 5,
               color: [c.body, c.wing, c.eye, "#ecf0f1"][Math.floor(Math.random() * 4)],
             });
           }
         } else {
           m.flashTimer = 0.3;
-          const force = 300 + Math.random() * 200;
+          const force = m.isHuge ? 100 + Math.random() * 80 : 300 + Math.random() * 200;
           m.vx = nx * force; m.vy = ny * force;
           m.eatingTimer = 0;
           if (m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
@@ -312,6 +367,13 @@ export class MonsterManager {
   }
 
   private damageCard(el: Element, dmg: number, m: Monster) {
+    // Shield absorption
+    const absorb = (window as any).__upgradeAbsorbDamage;
+    if (absorb) {
+      dmg = absorb(dmg);
+      if (dmg <= 0) return;
+    }
+
     const key = cardKey(el);
     const cur = damageMap.get(key) || 0;
     const next = Math.min(MAX_CARD_HP, cur + dmg);
@@ -418,11 +480,11 @@ export class MonsterManager {
     if (this.engaged) {
       this.engageTimer += dt;
       if (this.mobile) {
-        this.maxMonsters = Math.min(6, 2 + Math.floor((this.level - 1) * 0.7) + Math.floor(this.engageTimer / 15));
-        this.spawnInterval = Math.max(0.8, (2.2 / this.level) - this.engageTimer * 0.008);
+        this.maxMonsters = Math.min(10, 2 + Math.floor((this.level - 1) * 0.7) + Math.floor(this.engageTimer / 15));
+        this.spawnInterval = Math.max(0.5, (2.2 / this.level) - this.engageTimer * 0.008);
       } else {
-        this.maxMonsters = Math.min(18, (2 + this.level) + Math.floor(this.engageTimer / 6));
-        this.spawnInterval = Math.max(0.25, (1.2 / this.level) - this.engageTimer * 0.02);
+        this.maxMonsters = Math.min(25, (2 + this.level) + Math.floor(this.engageTimer / 6));
+        this.spawnInterval = Math.max(0.15, (1.2 / this.level) - this.engageTimer * 0.02);
       }
     } else {
       this.maxMonsters = this.mobile ? 2 + Math.floor((this.level - 1) * 0.7) : 2 + this.level;
@@ -466,7 +528,7 @@ export class MonsterManager {
       const dx = m.targetX - m.x;
       const dy = m.targetY - m.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      const sizeSpeedFactor = m.isBig ? 0.55 : 1;
+      const sizeSpeedFactor = m.isHuge ? 0.35 : m.isBig ? 0.55 : 1;
 
       if (dist > 5) {
         const accel = 200 * speedMult * sizeSpeedFactor;
@@ -482,9 +544,9 @@ export class MonsterManager {
       if (dist < 25) {
         m.eatingTimer += dt;
         if (m.targetEl && m.eatingTimer > 0.3) {
-          const shake = Math.sin(m.eatingTimer * 25) * (m.isBig ? 5 : 3);
+          const shake = Math.sin(m.eatingTimer * 25) * (m.isHuge ? 8 : m.isBig ? 5 : 3);
           (m.targetEl as HTMLElement).style.transform = `translateX(${shake}px)`;
-          const dmgMult = m.isBig ? 1.5 : 1;
+          const dmgMult = m.isHuge ? 2.5 : m.isBig ? 1.5 : 1;
           const mobileDmg = this.mobile ? 0.5 : 1;
           this.damageCard(m.targetEl, DAMAGE_PER_SECOND * dmgMult * mobileDmg * dt, m);
           if (Math.random() < dt * 8) {
@@ -594,7 +656,9 @@ export class MonsterManager {
 
       ctx.font = "bold 28px Caveat, cursive";
       ctx.fillStyle = "#2d3436";
-      const msgs = this.level >= 6 ? "Bigger creatures approaching..." : "They're getting faster...";
+      const msgs = this.level >= 10 ? "Colossal beasts incoming!"
+        : this.level >= 6 ? "Bigger creatures approaching..."
+        : "They're getting faster...";
       ctx.fillText(msgs, 0, 45);
 
       ctx.restore();

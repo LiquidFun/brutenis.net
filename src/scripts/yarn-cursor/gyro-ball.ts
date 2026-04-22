@@ -2,7 +2,7 @@ import { YarnBall } from "./yarn-ball";
 
 const RESTITUTION = 0.65;
 const DAMPING = 0.97;
-const GRAVITY_SCALE = 60.0;
+const DEFAULT_GRAVITY_SCALE = 60.0;
 const FLICK_SCALE = 62.0; // impulse from angular velocity (deg/s → px/s)
 const MAX_SPEED = 9000;
 export const GYRO_BALL_RADIUS = 14;
@@ -26,12 +26,24 @@ export class GyroBall {
   private prevBeta = 0;
   private prevGamma = 0;
   private hasOrientation = false;
-  private visual = new YarnBall();
+  visual: YarnBall;
   private trail: TrailPoint[] = [];
+  private gravityScale: number;
 
-  constructor(x: number, y: number) {
+  get radius(): number {
+    return this.visual.radius;
+  }
+
+  constructor(
+    x: number,
+    y: number,
+    gravityScale: number = DEFAULT_GRAVITY_SCALE,
+    color: string = "#ff6b6b",
+  ) {
     this.x = x;
     this.y = y;
+    this.gravityScale = gravityScale;
+    this.visual = new YarnBall(GYRO_BALL_RADIUS, color);
   }
 
   respawn(w: number, h: number) {
@@ -48,8 +60,8 @@ export class GyroBall {
     const b = Math.max(-90, Math.min(90, beta));
 
     // Static gravity from tilt angle
-    this.gravX = gamma * GRAVITY_SCALE;
-    this.gravY = b * GRAVITY_SCALE;
+    this.gravX = gamma * this.gravityScale;
+    this.gravY = b * this.gravityScale;
 
     // Angular velocity impulse (deg/s → force)
     if (this.hasOrientation && dt > 0) {
@@ -83,7 +95,7 @@ export class GyroBall {
     this.x += this.vx * dt;
     this.y += this.vy * dt;
 
-    const r = GYRO_BALL_RADIUS;
+    const r = this.radius;
     if (this.x < r) {
       this.x = r;
       this.vx = Math.abs(this.vx) * RESTITUTION;
@@ -119,7 +131,7 @@ export class GyroBall {
         ctx.moveTo(prev.x, prev.y);
         ctx.lineTo(curr.x, curr.y);
         ctx.strokeStyle = `rgba(255, 107, 107, ${t * 0.5})`;
-        ctx.lineWidth = t * GYRO_BALL_RADIUS * 1.5;
+        ctx.lineWidth = t * this.radius * 1.5;
         ctx.lineCap = "round";
         ctx.stroke();
       }

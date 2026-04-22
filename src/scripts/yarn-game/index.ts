@@ -1,8 +1,10 @@
 import { MonsterManager } from "./monsters";
+import { UpgradeManager } from "./upgrades";
 
 let canvas: HTMLCanvasElement | null = null;
 let ctx: CanvasRenderingContext2D | null = null;
 let monsters: MonsterManager | null = null;
+let upgrades: UpgradeManager | null = null;
 let lastTime = 0;
 let animId = 0;
 let initialized = false;
@@ -188,16 +190,38 @@ function setGameOverVisuals(on: boolean) {
   }
 }
 
+function getAllBalls(): Array<{ x: number; y: number; radius: number }> {
+  // getAllBallPositions already returns radius with bonus applied (YarnBall.radius getter)
+  const getAllPositions = (window as any).__yarnCursorGetAllBallPositions;
+  if (getAllPositions) {
+    const balls = getAllPositions();
+    if (balls.length > 0) return balls;
+  }
+  // Fallback to single ball (old API without bonus awareness)
+  const bonus = upgrades ? upgrades.getBallRadiusBonus() : 0;
+  const getBallPos = (window as any).__yarnCursorGetBallPos;
+  if (!getBallPos) return [];
+  const pos = getBallPos();
+  if (!pos) return [];
+  return [{ x: pos.x, y: pos.y, radius: YARN_BALL_RADIUS + bonus }];
+}
+
 function checkYarnBallVsMonsters() {
   if (!monsters || monsters.gameOver) return;
-  const getBallPos = (window as any).__yarnCursorGetBallPos;
-  if (!getBallPos) return;
-  const ballPos = getBallPos();
-  if (!ballPos) return;
+  const balls = getAllBalls();
+  if (balls.length === 0) return;
 
-  const hits = monsters.checkYarnBallHit(ballPos.x, ballPos.y, YARN_BALL_RADIUS);
-  if (hits > 0 && !monsters.engaged) {
+  let totalHits = 0;
+  for (const ball of balls) {
+    totalHits += monsters.checkYarnBallHit(ball.x, ball.y, ball.radius);
+  }
+  if (totalHits > 0 && !monsters.engaged) {
     monsters.engaged = true;
+  }
+
+  // Check upgrade pickup collision
+  if (upgrades) {
+    upgrades.checkCollision(balls);
   }
 }
 
@@ -218,7 +242,18 @@ function animate(time: number) {
     monsters.paused = false;
     monsters.update(dt);
     checkYarnBallVsMonsters();
+
+    // Upgrade system
+    if (upgrades) {
+      upgrades.checkLevelUp(monsters.level);
+      const balls = getAllBalls();
+      upgrades.applyMagnetForce(monsters.monsters, balls, dt);
+      upgrades.healCards(dt);
+      upgrades.update(dt);
+    }
+
     monsters.draw(ctx, time / 1000);
+    if (upgrades) upgrades.draw(ctx, time / 1000);
     updateHUD();
 
     // Check game over state transition
@@ -273,6 +308,18 @@ function init() {
 
   resize();
   monsters = new MonsterManager();
+  upgrades = new UpgradeManager();
+
+  // Wire up upgrade ↔ monster interactions
+  upgrades.setDamageMapAccess({
+    getDamage: (key) => monsters!.getDamage(key),
+    setDamage: (key, value) => monsters!.setDamage(key, value),
+    cardKey: (el) => monsters!.cardKey(el),
+    getAliveCards: () => monsters!.getAliveCards(),
+    refreshCardVisual: (el, dmg, maxHP) => monsters!.refreshCardVisual(el, dmg, maxHP),
+  });
+  (window as any).__upgradeAbsorbDamage = (dmg: number) => upgrades!.absorbDamage(dmg);
+  (window as any).__upgradeDamageMultiplier = () => upgrades!.getDamageMultiplier();
 
   window.addEventListener("resize", resize);
 
@@ -292,6 +339,7 @@ document.addEventListener("astro:page-load", () => {
       monsters.retarget();
     } else {
       monsters.cleanup();
+      if (upgrades) upgrades.cleanup();
     }
   }
 });

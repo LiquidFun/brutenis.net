@@ -5,8 +5,6 @@ import { GyroBall } from "./gyro-ball";
 
 let canvas: HTMLCanvasElement | null = null;
 let ctx: CanvasRenderingContext2D | null = null;
-let rope: VerletRope | null = null;
-let ball: YarnBall | null = null;
 let mouseX = -100;
 let mouseY = -100;
 let lastTime = 0;
@@ -15,25 +13,109 @@ let initialized = false;
 const isTouchDevice = window.matchMedia("(hover: none)").matches;
 let attackersEnabled = !isTouchDevice;
 
-// Gyro / mobile state
-let gyroBall: GyroBall | null = null;
+// ── Multi-ball state (desktop) ──
+interface RopeEntry {
+  rope: VerletRope;
+  ball: YarnBall;
+  color: string;
+}
+let ropes: RopeEntry[] = [];
+
+// ── Multi-ball state (mobile) ──
+let gyroBalls: GyroBall[] = [];
 let gyroActive = false;
 let gyroLastTime = 0;
 let gyroIdleTime = 0;
 let gyroHasMoved = false;
 let gyroHintShown = false;
 
-// Expose yarn ball position (always available — yarn ball is always on)
+// ── Radius bonus from upgrades ──
+let ballRadiusBonus = 0;
+
+// ── Extra ball configs ──
+const EXTRA_ROPE_CONFIGS = [
+  { numPoints: 15, segLen: 10, color: "#74b9ff" },
+  { numPoints: 12, segLen: 14, color: "#a06cd5" },
+  { numPoints: 18, segLen: 9, color: "#55efc4" },
+];
+
+const EXTRA_GYRO_CONFIGS = [
+  { gravScale: 55, color: "#74b9ff" },
+  { gravScale: 65, color: "#a06cd5" },
+  { gravScale: 50, color: "#55efc4" },
+];
+
+// ── Expose primary ball position (backward compat) ──
 export function getYarnBallPosition(): { x: number; y: number } | null {
-  if (gyroActive && gyroBall) return { x: gyroBall.x, y: gyroBall.y };
-  if (!rope) return null;
-  const pts = rope.points;
-  const last = pts[pts.length - 1];
-  return { x: last.x, y: last.y };
+  if (gyroActive && gyroBalls.length > 0) {
+    return { x: gyroBalls[0].x, y: gyroBalls[0].y };
+  }
+  if (ropes.length > 0) {
+    const pts = ropes[0].rope.points;
+    const last = pts[pts.length - 1];
+    return { x: last.x, y: last.y };
+  }
+  return null;
 }
 (window as any).__yarnCursorGetBallPos = getYarnBallPosition;
 
-// Expose attackers enabled state for the game module
+// ── Expose all ball positions (for multi-ball hit detection) ──
+function getAllBallPositions(): Array<{ x: number; y: number; radius: number }> {
+  if (gyroActive) {
+    return gyroBalls.map((gb) => ({
+      x: gb.x,
+      y: gb.y,
+      radius: gb.radius,
+    }));
+  }
+  return ropes.map((entry) => {
+    const pts = entry.rope.points;
+    const last = pts[pts.length - 1];
+    return { x: last.x, y: last.y, radius: entry.ball.radius };
+  });
+}
+(window as any).__yarnCursorGetAllBallPositions = getAllBallPositions;
+
+// ── Add extra ball (called by upgrade system) ──
+function addBall() {
+  if (gyroActive) {
+    const idx = gyroBalls.length - 1; // 0-indexed into extra configs
+    if (idx >= EXTRA_GYRO_CONFIGS.length) return;
+    const cfg = EXTRA_GYRO_CONFIGS[idx];
+    const gb = new GyroBall(
+      window.innerWidth / 2 + (Math.random() - 0.5) * 100,
+      window.innerHeight / 2 + (Math.random() - 0.5) * 100,
+      cfg.gravScale,
+      cfg.color,
+    );
+    gb.visual.radiusBonus = ballRadiusBonus;
+    // Share orientation from primary
+    gyroBalls.push(gb);
+  } else {
+    const idx = ropes.length - 1; // 0-indexed into extra configs
+    if (idx >= EXTRA_ROPE_CONFIGS.length) return;
+    const cfg = EXTRA_ROPE_CONFIGS[idx];
+    const newRope = new VerletRope(mouseX, mouseY, cfg.numPoints, cfg.segLen);
+    const newBall = new YarnBall(14, cfg.color);
+    newBall.radiusBonus = ballRadiusBonus;
+    ropes.push({ rope: newRope, ball: newBall, color: cfg.color });
+  }
+}
+(window as any).__yarnCursorAddBall = addBall;
+
+// ── Set radius bonus (called by upgrade system) ──
+function setRadiusBonus(bonus: number) {
+  ballRadiusBonus = bonus;
+  for (const entry of ropes) {
+    entry.ball.radiusBonus = bonus;
+  }
+  for (const gb of gyroBalls) {
+    gb.visual.radiusBonus = bonus;
+  }
+}
+(window as any).__yarnCursorSetRadiusBonus = setRadiusBonus;
+
+// ── Expose attackers enabled state ──
 export function areAttackersEnabled(): boolean {
   return attackersEnabled;
 }
@@ -45,18 +127,23 @@ function resize() {
   canvas.height = window.innerHeight;
 }
 
+// ── Desktop animate ──
 function animate(time: number) {
-  if (!ctx || !canvas || !rope || !ball) return;
+  if (!ctx || !canvas || ropes.length === 0) return;
 
   const dt = Math.min((time - lastTime) / 1000, 0.033);
   lastTime = time;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  rope.update(mouseX, mouseY, dt);
-  const points = rope.getPoints();
-  drawRope(ctx, points);
-  drawYarnBall(ctx, ball, points);
+  // Draw extra balls first (behind primary)
+  for (let i = ropes.length - 1; i >= 0; i--) {
+    const entry = ropes[i];
+    entry.rope.update(mouseX, mouseY, dt);
+    const points = entry.rope.getPoints();
+    drawRope(ctx, points, entry.color);
+    drawYarnBall(ctx, entry.ball, points);
+  }
 
   animId = requestAnimationFrame(animate);
 }
@@ -80,14 +167,15 @@ function setAttackersEnabled(value: boolean) {
   const toast = (window as any).__gameShowToast;
   if (toast) toast(value ? "Game Enabled" : "Game Disabled");
 
-  if (value && gyroBall && canvas) {
-    gyroBall.respawn(canvas.width, canvas.height);
+  if (value && gyroBalls.length > 0 && canvas) {
+    for (const gb of gyroBalls) {
+      gb.respawn(canvas.width, canvas.height);
+    }
     gyroIdleTime = 0;
     gyroHasMoved = false;
     gyroHintShown = false;
   }
   if (!value) {
-    // Dismiss hint if showing
     const dismissHint = (window as any).__gameDismissHint;
     if (dismissHint) dismissHint();
   }
@@ -102,12 +190,10 @@ function syncButton() {
   if (!hud) return;
   hud.classList.toggle("game-hud-collapsed", !attackersEnabled);
 
-  // Reset HUD contents when toggling
   const label = document.getElementById("hud-disable-label");
   const separator = document.getElementById("hud-separator");
   const scoreWrap = document.getElementById("game-score-wrap");
   if (attackersEnabled) {
-    // Reset to initial "Disable Game" state; updateHUD() will take over
     if (label) label.style.display = "";
     if (separator) separator.style.display = "none";
     if (scoreWrap) scoreWrap.style.display = "none";
@@ -144,8 +230,10 @@ function init() {
   if (!ctx) return;
 
   resize();
-  rope = new VerletRope(mouseX, mouseY);
-  ball = new YarnBall();
+  // Primary rope + ball
+  const primaryRope = new VerletRope(mouseX, mouseY);
+  const primaryBall = new YarnBall();
+  ropes = [{ rope: primaryRope, ball: primaryBall, color: "#ff6b6b" }];
 
   window.addEventListener("resize", resize);
   document.addEventListener("mousemove", onMouseMove);
@@ -169,17 +257,22 @@ function showHudForGyro() {
   syncButton();
 }
 
+// ── Mobile animate ──
 function animateGyro(time: number) {
-  if (!ctx || !canvas || !gyroBall) return;
+  if (!ctx || !canvas || gyroBalls.length === 0) return;
   const dt = Math.min((time - gyroLastTime) / 1000, 0.033);
   gyroLastTime = time;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (attackersEnabled) {
-    gyroBall.update(dt, canvas.width, canvas.height);
-    gyroBall.draw(ctx);
+    // Update and draw all gyro balls (extras behind primary)
+    for (let i = gyroBalls.length - 1; i >= 0; i--) {
+      gyroBalls[i].update(dt, canvas.width, canvas.height);
+      gyroBalls[i].draw(ctx);
+    }
 
-    // Idle hint: show after 3s of no movement
-    const speed = Math.sqrt(gyroBall.vx * gyroBall.vx + gyroBall.vy * gyroBall.vy);
+    // Idle hint: check primary ball only
+    const primary = gyroBalls[0];
+    const speed = Math.sqrt(primary.vx * primary.vx + primary.vy * primary.vy);
     if (speed > 50) {
       gyroHasMoved = true;
       gyroIdleTime = 0;
@@ -210,13 +303,19 @@ function startGyro() {
   resize();
   window.addEventListener("resize", resize);
 
-  gyroBall = new GyroBall(window.innerWidth / 2, window.innerHeight / 2);
+  // Primary gyro ball
+  const primaryGyro = new GyroBall(window.innerWidth / 2, window.innerHeight / 2);
+  gyroBalls = [primaryGyro];
+
   let lastOrientTime = performance.now();
   window.addEventListener("deviceorientation", (e: DeviceOrientationEvent) => {
     const now = performance.now();
     const dt = (now - lastOrientTime) / 1000;
     lastOrientTime = now;
-    gyroBall?.setOrientation(e.beta ?? 0, e.gamma ?? 0, dt);
+    // Feed orientation to ALL gyro balls
+    for (const gb of gyroBalls) {
+      gb.setOrientation(e.beta ?? 0, e.gamma ?? 0, dt);
+    }
   });
 
   const saved = localStorage.getItem("attackers-enabled");
@@ -256,7 +355,6 @@ async function initMobile() {
   const needsPermission = typeof DevOrient?.requestPermission === "function";
 
   if (needsPermission) {
-    // iOS 13+: show permission overlay, then probe after grant
     const overlay = document.getElementById("gyro-permission-overlay");
     if (overlay) overlay.style.display = "flex";
 
@@ -283,7 +381,6 @@ async function initMobile() {
     return;
   }
 
-  // Android / others: probe for real gyro data first
   const hasGyro = await probeGyro();
   if (hasGyro) startGyro();
 }

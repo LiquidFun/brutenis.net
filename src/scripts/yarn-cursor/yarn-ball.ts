@@ -2,8 +2,18 @@ import type { Vec2 } from "./verlet-rope";
 
 export class YarnBall {
   rotation: number = 0;
-  radius: number = 14;
-  color: string = "#ff6b6b";
+  private baseRadius: number;
+  radiusBonus: number = 0;
+  color: string;
+
+  get radius(): number {
+    return this.baseRadius + this.radiusBonus;
+  }
+
+  constructor(radius: number = 14, color: string = "#ff6b6b") {
+    this.baseRadius = radius;
+    this.color = color;
+  }
 
   update(velocity: Vec2) {
     const speed = Math.sqrt(velocity.x * velocity.x + velocity.y * velocity.y);
