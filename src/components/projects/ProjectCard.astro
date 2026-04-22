@@ -1,5 +1,4 @@
 ---
-import TagPill from "@components/blog/TagPill.astro";
 import { getTagColor } from "@lib/tag-colors";
 
 interface Props {
@@ -49,9 +48,6 @@ const linkEntries = Object.entries(links).filter(([, v]) => v);
         ))}
       </div>
       <p class="text-text-charcoal mt-2 mb-3 text-sm">{description}</p>
-      <div class="flex flex-wrap gap-2 mb-3">
-        {tags.map((tag) => <TagPill tag={tag} />)}
-      </div>
     </div>
     {thumbnail && (
       <div class="project-card-image">
