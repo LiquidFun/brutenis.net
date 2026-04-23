@@ -149,6 +149,26 @@ const playUrl = game.data.links?.play;
       embed.replaceChildren(iframe);
       if (fsBtn) fsBtn.style.display = '';
       if (muteBtn) muteBtn.style.display = '';
+
+      // Patch AudioContext in iframe to track all instances
+      iframe.addEventListener('load', () => {
+        try {
+          const win = iframe.contentWindow as any;
+          win.__audioContexts = win.__audioContexts || [];
+          const Orig = win.AudioContext || win.webkitAudioContext;
+          if (Orig && !win.__acPatched) {
+            win.__acPatched = true;
+            const patched = function(this: AudioContext, ...args: any[]) {
+              const ctx = new Orig(...args);
+              win.__audioContexts.push(ctx);
+              return ctx;
+            };
+            patched.prototype = Orig.prototype;
+            if (win.AudioContext) win.AudioContext = patched;
+            if (win.webkitAudioContext) win.webkitAudioContext = patched;
+          }
+        } catch { /* cross-origin */ }
+      });
     });
 
     muteBtn?.addEventListener('click', () => {
@@ -161,10 +181,25 @@ const playUrl = game.data.links?.play;
         // Mute all <audio> and <video> elements
         const media = win.document.querySelectorAll('audio, video');
         media.forEach((el: HTMLMediaElement) => { el.muted = muted; });
-        // Suspend/resume AudioContext (used by Godot)
-        const ctx = win.GodotAudio?.ctx || win.Godot?.audio?.ctx;
-        if (ctx) { muted ? ctx.suspend() : ctx.resume(); }
-      } catch { /* cross-origin, ignore */ }
+
+        // Suspend/resume all tracked AudioContexts
+        const contexts: AudioContext[] = win.__audioContexts || [];
+
+        // Also check common Godot globals as fallback
+        const candidates = [
+          win.GodotAudio?.ctx,
+          win.Godot?.audio?.ctx,
+          win.Module?.audio_context,
+        ];
+        for (const ctx of candidates) {
+          if (ctx && !contexts.includes(ctx)) contexts.push(ctx);
+        }
+
+        for (const ctx of contexts) {
+          if (muted) ctx.suspend();
+          else ctx.resume();
+        }
+      } catch { /* cross-origin */ }
 
       document.getElementById('mute-icon-off')!.style.display = muted ? 'none' : '';
       document.getElementById('mute-icon-on')!.style.display = muted ? '' : 'none';
