@@ -30,8 +30,6 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     <ClientRouter />
   </head>
   <body class="flex flex-col min-h-screen">
-    <!-- Background strings canvas (behind content) -->
-    <canvas id="yarn-bg-canvas" class="yarn-canvas yarn-canvas-bg" transition:persist="yarn-bg-canvas"></canvas>
     <!-- Game canvas (behind content) -->
     <canvas id="yarn-game-canvas" class="yarn-canvas yarn-canvas-game" transition:persist="yarn-game-canvas"></canvas>
     <!-- Cursor canvas (above content) -->
@@ -99,7 +97,6 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     <script>
       import "@scripts/yarn-cursor/index";
       import "@scripts/yarn-game/index";
-      import "@scripts/yarn-strings";
       import "@scripts/animated-logo";
       import "@scripts/clickable-cards";
     </script>
@@ -126,11 +123,6 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     left: 0;
     width: 100%;
     height: 100%;
-  }
-
-  .yarn-canvas-bg {
-    z-index: -1;
-    pointer-events: none;
   }
 
   .yarn-canvas-game {
