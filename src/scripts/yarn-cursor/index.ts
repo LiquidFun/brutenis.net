@@ -101,6 +101,7 @@ function syncButton() {
   const hud = document.getElementById("game-hud");
   if (!hud) return;
   hud.classList.toggle("game-hud-collapsed", !attackersEnabled);
+  hud.title = attackersEnabled ? "" : "Start Game";
 
   // Reset HUD contents when toggling
   const label = document.getElementById("hud-disable-label");

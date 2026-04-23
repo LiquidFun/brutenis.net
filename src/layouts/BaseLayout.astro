@@ -35,7 +35,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     <!-- Cursor canvas (above content) -->
     <canvas id="yarn-cursor-canvas" class="yarn-canvas yarn-canvas-cursor" transition:persist="yarn-cursor-canvas"></canvas>
     <!-- Game HUD + attackers toggle -->
-    <div id="game-hud" class="game-hud" transition:persist="game-hud">
+    <div id="game-hud" class="game-hud" title="Start Game" transition:persist="game-hud">
       <span class="hud-sword">&#x2694;</span>
       <span id="hud-disable-label" class="font-heading text-lg hud-label">Disable Game</span>
       <span id="hud-separator" class="hud-separator" style="display:none">|</span>
@@ -187,8 +187,8 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
   .game-hud {
     position: fixed;
     top: calc(100dvh - 5.5rem);
-    left: 50%;
-    transform: translateX(-50%);
+    right: 50%;
+    transform: translateX(50%);
     z-index: 100;
     background: rgba(255, 255, 255, 0.95);
     backdrop-filter: blur(4px);
@@ -202,14 +202,20 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     white-space: nowrap;
     cursor: pointer;
     user-select: none;
-    transition: top 0.5s ease, left 0.5s ease, transform 0.5s ease,
+    transition: top 0.5s ease, right 0.5s ease, transform 0.5s ease,
                 padding 0.3s ease, border-radius 0.3s ease,
                 gap 0.3s ease, background 0.3s ease, box-shadow 0.3s ease;
   }
 
+  @media (min-width: 640px) {
+    .game-hud {
+      top: calc(100dvh - 12rem);
+    }
+  }
+
   .game-hud-collapsed {
-    top: 0.35rem;
-    left: 0.5rem;
+    top: 0.5rem;
+    right: 0.5rem;
     transform: none;
     padding: 0;
     border-radius: 50%;
@@ -233,6 +239,19 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
   .game-hud-collapsed .hud-dismiss {
     display: none;
   }
+
+  @media (min-width: 640px) {
+    .game-hud-collapsed {
+      width: 3rem;
+      height: 3rem;
+      top: 0.55rem;
+      right: 0.55rem;
+    }
+    .game-hud-collapsed .hud-sword {
+      font-size: 1.6rem;
+    }
+  }
+
 
   .canvas-greyed {
     filter: grayscale(0.8) brightness(0.6);

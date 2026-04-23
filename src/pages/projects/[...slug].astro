@@ -1,5 +1,6 @@
 ---
 import ProjectLayout from "@layouts/ProjectLayout.astro";
+import GameEmbed from "@components/projects/GameEmbed.astro";
 import { getCollection, render } from "astro:content";
 
 export async function getStaticPaths() {
@@ -12,6 +13,7 @@ export async function getStaticPaths() {
 
 const project = Astro.props;
 const { Content } = await render(project);
+const playUrl = project.data.links?.play;
 ---
 
 <ProjectLayout
@@ -24,5 +26,8 @@ const { Content } = await render(project);
   backLink="/projects"
   backLabel="Back to projects"
 >
+  {playUrl && (
+    <GameEmbed playUrl={playUrl} title={project.data.title} slot="embed" />
+  )}
   <Content />
 </ProjectLayout>
