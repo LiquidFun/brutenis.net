@@ -147,8 +147,6 @@ export class UpgradeManager {
       isFirst,
     });
 
-    const toast = (window as any).__gameShowToast;
-    if (toast) toast("Upgrade spawned!");
   }
 
   private overlapsCard(x: number, y: number): boolean {

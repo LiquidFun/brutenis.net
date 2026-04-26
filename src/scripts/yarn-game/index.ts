@@ -214,6 +214,7 @@ function checkYarnBallVsMonsters() {
   let totalHits = 0;
   for (const ball of balls) {
     totalHits += monsters.checkYarnBallHit(ball.x, ball.y, ball.radius);
+    monsters.checkProjectileHit(ball.x, ball.y, ball.radius);
   }
   if (totalHits > 0 && !monsters.engaged) {
     monsters.engaged = true;
@@ -365,10 +366,7 @@ function initCheatPanel() {
     fontSize: "13px",
   });
   btn.addEventListener("click", () => {
-    if (monsters) {
-      monsters.skipToNextLevel();
-      showToast(`Skipped to level ${monsters.level}!`);
-    }
+    if (monsters) monsters.skipToNextLevel();
   });
 
   panel.appendChild(btn);

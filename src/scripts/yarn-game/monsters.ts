@@ -6,6 +6,20 @@ const MONSTER_COLORS = [
   { body: "#4a235a", eye: "#2ecc71", wing: "#7d3c98" },
 ];
 
+const SHOOTER_COLORS = [
+  { body: "#922b21", eye: "#f1c40f", ring: "#e74c3c" },
+  { body: "#4a235a", eye: "#00cec9", ring: "#9b59b6" },
+  { body: "#0b5345", eye: "#ff6348", ring: "#2ed573" },
+];
+
+const SHOOTER_FIRST_LEVEL = 5;
+const SHOOTER_ORBIT_SPEED = 0.4;
+const SHOOTER_ORBIT_PADDING = 130;
+const SHOOTER_COOLDOWN = 2.5;
+const SHOOTER_CHARGE_TIME = 0.8;
+const PROJECTILE_SPEED = 250;
+const PROJECTILE_DAMAGE = 0.4;
+
 const MAX_CARD_HP = 5;
 const DAMAGE_PER_SECOND = 0.8;
 
@@ -176,6 +190,14 @@ interface Particle {
   life: number; maxLife: number; size: number; color: string;
 }
 
+interface Projectile {
+  x: number; y: number;
+  targetEl: Element;
+  shooterId: string;
+  life: number;
+  color: string;
+}
+
 interface Monster {
   x: number; y: number; vx: number; vy: number;
   targetT: number; targetX: number; targetY: number;
@@ -184,7 +206,10 @@ interface Monster {
   alive: boolean; spawnAnim: number;
   eatingTimer: number; targetEl: Element | null;
   hp: number; isBig: boolean; isHuge: boolean; flashTimer: number;
-  id: string; // unique id for crack tree association
+  id: string;
+  isShooter: boolean;
+  orbitAngle: number;
+  shootCooldown: number;
 }
 
 let monsterIdCounter = 0;
@@ -224,6 +249,7 @@ let prevScrollY = 0;
 
 export class MonsterManager {
   monsters: Monster[] = [];
+  projectiles: Projectile[] = [];
   particles: Particle[] = [];
   eatParticles: Particle[] = [];
   score: number = 0;
@@ -318,11 +344,33 @@ export class MonsterManager {
     const target = this.findTarget();
     if (!target) return;
 
+    // Shooter chance: 50% at level 5, tapering to 20% at higher levels
+    const shooterChance = this.level >= SHOOTER_FIRST_LEVEL
+      ? Math.max(0.2, 0.5 - (this.level - SHOOTER_FIRST_LEVEL) * 0.06)
+      : 0;
+    if (Math.random() < shooterChance) {
+      const pos = this.spawnOffScreen();
+      this.monsters.push({
+        x: pos.x, y: pos.y, vx: 0, vy: 0,
+        targetT: target.t, targetX: target.x, targetY: target.y,
+        size: 34, hitRadius: 68,
+        colorIdx: Math.floor(Math.random() * SHOOTER_COLORS.length),
+        wingPhase: Math.random() * Math.PI * 2,
+        alive: true, spawnAnim: 0, eatingTimer: 0, targetEl: target.el,
+        hp: 2, isBig: false, isHuge: false, flashTimer: 0,
+        id: `m${monsterIdCounter++}`,
+        isShooter: true,
+        orbitAngle: Math.random() * Math.PI * 2,
+        shootCooldown: SHOOTER_COOLDOWN,
+      });
+      return;
+    }
+
     const canSpawnBig = this.level >= 6;
     const canSpawnHuge = this.level >= 10;
     const roll = Math.random();
     const isHuge = canSpawnHuge && roll < 0.15;
-    const isBig = !isHuge && canSpawnBig && roll < 0.40; // 25% big (0.15–0.40)
+    const isBig = !isHuge && canSpawnBig && roll < 0.40;
 
     let size: number, hp: number;
     if (isHuge) {
@@ -347,6 +395,7 @@ export class MonsterManager {
       alive: true, spawnAnim: 0, eatingTimer: 0, targetEl: target.el,
       hp, isBig: isBig || isHuge, isHuge, flashTimer: 0,
       id: `m${monsterIdCounter++}`,
+      isShooter: false, orbitAngle: 0, shootCooldown: 0,
     });
   }
 
@@ -363,12 +412,13 @@ export class MonsterManager {
         const nx = dist > 0 ? dx / dist : 0;
         const ny = dist > 0 ? dy / dist : -1;
 
+        const c = m.isShooter ? SHOOTER_COLORS[m.colorIdx] : MONSTER_COLORS[m.colorIdx];
+
         if (m.hp <= 0) {
           m.alive = false;
           if (m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
           this.score++;
           hits++;
-          const c = MONSTER_COLORS[m.colorIdx];
           const count = m.isHuge ? 40 : m.isBig ? 28 : 18;
           for (let i = 0; i < count; i++) {
             const spread = (Math.random() - 0.5) * Math.PI * 0.8;
@@ -380,17 +430,16 @@ export class MonsterManager {
               y: m.y + (Math.random() - 0.5) * m.size * 0.5,
               vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
               life, maxLife: life, size: m.isHuge ? 4 + Math.random() * 8 : m.isBig ? 3 + Math.random() * 6 : 2 + Math.random() * 5,
-              color: [c.body, c.wing, c.eye, "#ecf0f1"][Math.floor(Math.random() * 4)],
+              color: [c.body, "ring" in c ? c.ring : c.wing, c.eye, "#ecf0f1"][Math.floor(Math.random() * 4)],
             });
           }
         } else {
           m.flashTimer = 0.3;
-          const force = m.isHuge ? 100 + Math.random() * 80 : 300 + Math.random() * 200;
+          const force = m.isShooter ? 150 + Math.random() * 100 : m.isHuge ? 100 + Math.random() * 80 : 300 + Math.random() * 200;
           m.vx = nx * force; m.vy = ny * force;
           m.eatingTimer = 0;
           if (m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
           hits++;
-          const c = MONSTER_COLORS[m.colorIdx];
           for (let i = 0; i < 6; i++) {
             const angle = Math.atan2(ny, nx) + (Math.random() - 0.5) * 1.2;
             const speed = 100 + Math.random() * 200;
@@ -405,7 +454,7 @@ export class MonsterManager {
     return hits;
   }
 
-  private damageCard(el: Element, dmg: number, m: Monster) {
+  private damageCardAt(el: Element, dmg: number, hitX: number, hitY: number, sourceId: string) {
     // Shield absorption
     const absorb = (window as any).__upgradeAbsorbDamage;
     if (absorb) {
@@ -419,13 +468,13 @@ export class MonsterManager {
     damageMap.set(key, next);
     const pct = next / MAX_CARD_HP;
 
-    // Grow this monster's crack tree on the card
+    // Grow crack tree on the card
     const rect = (el as HTMLElement).getBoundingClientRect();
-    const lx = (m.x - rect.left) / rect.width;
-    const ly = (m.y - rect.top) / rect.height;
+    const lx = (hitX - rect.left) / rect.width;
+    const ly = (hitY - rect.top) / rect.height;
     const cx = 0.5, cy = 0.5;
     const angle = Math.atan2(cy - ly, cx - lx);
-    const tree = getOrCreateCrackTree(key, m.id, lx, ly, angle);
+    const tree = getOrCreateCrackTree(key, sourceId, lx, ly, angle);
     extendCrackTree(tree, dmg);
 
     if (pct > 0.05) applyCrackOverlay(el, pct);
@@ -509,6 +558,7 @@ export class MonsterManager {
     const scrollDelta = scrollY - prevScrollY;
     if (scrollDelta !== 0) {
       for (const m of this.monsters) { m.y -= scrollDelta; m.targetY -= scrollDelta; }
+      for (const p of this.projectiles) { p.y -= scrollDelta; }
       for (const p of this.particles) { p.y -= scrollDelta; }
       for (const p of this.eatParticles) { p.y -= scrollDelta; }
     }
@@ -547,14 +597,21 @@ export class MonsterManager {
       for (let i = 0; i < toSpawn; i++) this.spawn();
     }
 
-    const speedMult = this.mobile
+    // Sawtooth speed: drops every 5 levels, then ramps back up
+    // posInCycle: 0 at the drop (level 5,10,15...), up to 4 before next drop
+    const posInCycle = ((this.level - 1) % 5);
+    // Base rises with level, cycle dips then recovers over 5 levels
+    const cycleMin = 0.5; // drop to 50% of current base at cycle start
+    const cycleFrac = cycleMin + (1 - cycleMin) * (posInCycle / 4);
+    const baseSpeed = this.mobile
       ? 0.6 + (this.level - 1) * 0.25
       : 1 + (this.level - 1) * 0.5;
+    const speedMult = baseSpeed * cycleFrac;
 
     for (const m of this.monsters) {
       if (!m.alive) continue;
       m.spawnAnim = Math.min(1, m.spawnAnim + dt * 3);
-      m.wingPhase += dt * (m.isBig ? 10 : 14);
+      m.wingPhase += dt * (m.isShooter ? 3 : m.isBig ? 10 : 14);
       if (m.flashTimer > 0) m.flashTimer -= dt;
 
       if (m.flashTimer > 0) {
@@ -569,7 +626,48 @@ export class MonsterManager {
         else continue;
       }
 
-      // getBoundingClientRect already accounts for scroll
+      if (m.isShooter) {
+        // ── Shooter: orbit around target card and fire projectiles ──
+        if (!m.targetEl) continue;
+        const rect = m.targetEl.getBoundingClientRect();
+        const ccx = rect.left + rect.width / 2;
+        const ccy = rect.top + rect.height / 2;
+        const orbitR = Math.max(rect.width, rect.height) / 2 + SHOOTER_ORBIT_PADDING;
+
+        m.orbitAngle += SHOOTER_ORBIT_SPEED * dt;
+        const goalX = ccx + Math.cos(m.orbitAngle) * orbitR;
+        const goalY = ccy + Math.sin(m.orbitAngle) * orbitR;
+
+        const dx = goalX - m.x;
+        const dy = goalY - m.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const shooterSpeed = 80 * speedMult * 0.5;
+        if (dist > 3) {
+          m.vx += (dx / dist) * shooterSpeed * dt * 10;
+          m.vy += (dy / dist) * shooterSpeed * dt * 10;
+          const spd = Math.sqrt(m.vx * m.vx + m.vy * m.vy);
+          if (spd > shooterSpeed) { m.vx = (m.vx / spd) * shooterSpeed; m.vy = (m.vy / spd) * shooterSpeed; }
+        }
+        m.x += m.vx * dt; m.y += m.vy * dt;
+        m.vx *= 0.92; m.vy *= 0.92;
+
+        // Shooting — only when reachable by player
+        m.shootCooldown -= dt;
+        if (m.shootCooldown <= 0 && this.canShooterFire(m)) {
+          const sc = SHOOTER_COLORS[m.colorIdx];
+          this.projectiles.push({
+            x: m.x, y: m.y,
+            targetEl: m.targetEl,
+            shooterId: m.id,
+            life: 4,
+            color: sc.ring,
+          });
+          m.shootCooldown = SHOOTER_COOLDOWN;
+        }
+        continue;
+      }
+
+      // ── Moth: move toward card perimeter and eat ──
       if (m.targetEl) {
         const rect = m.targetEl.getBoundingClientRect();
         const pt = pointOnPerimeter(rect, m.targetT);
@@ -600,7 +698,7 @@ export class MonsterManager {
           const dmgMult = m.isHuge ? 2.5 : m.isBig ? 1.5 : 1;
           const mobileDmg = this.mobile ? 0.5 : 1;
           const lvlDmg = this.level <= 1 ? 0.05 : 1;
-          this.damageCard(m.targetEl, DAMAGE_PER_SECOND * dmgMult * mobileDmg * lvlDmg * dt, m);
+          this.damageCardAt(m.targetEl, DAMAGE_PER_SECOND * dmgMult * mobileDmg * lvlDmg * dt, m.x, m.y, m.id);
           if (Math.random() < dt * 8) {
             for (let i = 0; i < 2; i++) {
               const a = Math.random() * Math.PI * 2;
@@ -620,11 +718,77 @@ export class MonsterManager {
       }
     }
 
+    // ── Update projectiles ──
+    this.updateProjectiles(dt);
+
     this.updateParticles(dt);
     for (const m of this.monsters) {
       if (!m.alive && m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
     }
     this.monsters = this.monsters.filter(m => m.alive);
+  }
+
+  checkProjectileHit(ballX: number, ballY: number, ballRadius: number) {
+    const hitRadius = ballRadius + 5; // projectile is ~5px
+    for (const p of this.projectiles) {
+      const dx = p.x - ballX;
+      const dy = p.y - ballY;
+      if (dx * dx + dy * dy < hitRadius * hitRadius) {
+        // Destroy projectile with small burst
+        for (let i = 0; i < 4; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 40 + Math.random() * 60;
+          this.particles.push({
+            x: p.x, y: p.y,
+            vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+            life: 0.2, maxLife: 0.2, size: 2 + Math.random() * 2, color: p.color,
+          });
+        }
+        p.life = 0;
+      }
+    }
+  }
+
+  private canShooterFire(m: Monster): boolean {
+    // Must be within horizontal viewport (no horizontal scroll)
+    if (m.x < 0 || m.x > window.innerWidth) return false;
+    // Must be reachable by scrolling vertically (within page bounds)
+    const pageY = m.y + window.scrollY;
+    return pageY >= 0 && pageY <= document.documentElement.scrollHeight;
+  }
+
+  private updateProjectiles(dt: number) {
+    for (const p of this.projectiles) {
+      // Home toward target card center
+      const rect = p.targetEl.getBoundingClientRect();
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const dx = cx - p.x;
+      const dy = cy - p.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > 0) {
+        p.x += (dx / dist) * PROJECTILE_SPEED * dt;
+        p.y += (dy / dist) * PROJECTILE_SPEED * dt;
+      }
+      p.life -= dt;
+
+      // Hit card when within bounds
+      if (p.x >= rect.left && p.x <= rect.right && p.y >= rect.top && p.y <= rect.bottom) {
+        this.damageCardAt(p.targetEl, PROJECTILE_DAMAGE, p.x, p.y, p.shooterId);
+        // Impact particles
+        for (let i = 0; i < 6; i++) {
+          const a = Math.random() * Math.PI * 2;
+          const sp = 50 + Math.random() * 80;
+          this.particles.push({
+            x: p.x, y: p.y,
+            vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+            life: 0.3, maxLife: 0.3, size: 2 + Math.random() * 3, color: p.color,
+          });
+        }
+        p.life = 0;
+      }
+    }
+    this.projectiles = this.projectiles.filter(p => p.life > 0);
   }
 
   private updateParticles(dt: number) {
@@ -710,57 +874,151 @@ export class MonsterManager {
       ctx.fillStyle = "#2d3436";
       const msgs = this.level >= 10 ? "Colossal beasts incoming!"
         : this.level >= 6 ? "Bigger creatures approaching..."
+        : this.level >= 5 ? "Ranged enemies spotted!"
         : "They're getting faster...";
       ctx.fillText(msgs, 0, 45);
 
       ctx.restore();
     }
 
+    // ── Draw projectiles (pixel art style) ──
+    for (const proj of this.projectiles) {
+      ctx.save();
+      const rect = proj.targetEl.getBoundingClientRect();
+      const tcx = rect.left + rect.width / 2;
+      const tcy = rect.top + rect.height / 2;
+      const a = Math.atan2(tcy - proj.y, tcx - proj.x);
+      // Trail: shrinking squares
+      ctx.fillStyle = proj.color;
+      for (let i = 3; i >= 1; i--) {
+        ctx.globalAlpha = 0.15 + (3 - i) * 0.05;
+        const ts = 6 - i * 1.5;
+        const tx = proj.x - Math.cos(a) * i * 7;
+        const ty = proj.y - Math.sin(a) * i * 7;
+        px(tx - ts / 2, ty - ts / 2, ts, ts);
+      }
+      // Main pixel
+      ctx.globalAlpha = 0.9;
+      px(proj.x - 3, proj.y - 3, 6, 6);
+      // Bright center
+      ctx.fillStyle = "#ecf0f1";
+      px(proj.x - 1.5, proj.y - 1.5, 3, 3);
+      ctx.restore();
+    }
+
+    // ── Draw monsters ──
     for (const m of this.monsters) {
       if (!m.alive) continue;
-      const c = MONSTER_COLORS[m.colorIdx];
       const s = m.size * m.spawnAnim;
       if (s < 0.5) continue;
 
       ctx.save(); ctx.translate(m.x, m.y);
-
       if (m.flashTimer > 0 && Math.sin(m.flashTimer * 40) > 0) ctx.globalAlpha = 0.5;
 
-      const p = s / 7;
-      const wingUp = Math.sin(m.wingPhase) * 0.6;
-      ctx.fillStyle = c.wing;
-      px(-4.5 * p, (-1 + wingUp) * p, 2.5 * p, 3.5 * p);
-      px(-3.5 * p, (-2.5 + wingUp) * p, 1.5 * p, 1.5 * p);
-      px(2 * p, (-1 + wingUp) * p, 2.5 * p, 3.5 * p);
-      px(2 * p, (-2.5 + wingUp) * p, 1.5 * p, 1.5 * p);
-      ctx.fillStyle = c.body;
-      px(-2.5 * p, -2.5 * p, 5 * p, 6 * p);
-      px(-1.5 * p, -3.5 * p, 3 * p, 1 * p);
-      px(-1.5 * p, 3.5 * p, 3 * p, 1 * p);
+      if (m.isShooter) {
+        // ── Shooter: pixel art floating eye turret ──
+        const sc = SHOOTER_COLORS[m.colorIdx];
+        const p = s / 7;
+        const bob = Math.sin(m.wingPhase) * p * 0.5;
 
-      if (m.isBig && m.hp > 1) {
-        ctx.fillStyle = "#e74c3c";
-        for (let i = 0; i < m.hp; i++) {
-          const pipX = -((m.hp - 1) * p * 0.8) / 2 + i * p * 0.8;
-          ctx.fillRect(pipX - p * 0.3, -4 * p, p * 0.6, p * 0.5);
+        // Charge glow (pixel squares around body when about to fire)
+        const chargeT = 1 - Math.min(1, m.shootCooldown / SHOOTER_CHARGE_TIME);
+        if (chargeT > 0) {
+          ctx.fillStyle = sc.ring;
+          ctx.globalAlpha = chargeT * 0.5;
+          const glow = Math.floor(chargeT * 3) + 1;
+          for (let i = 0; i < 4; i++) {
+            const ga = (i / 4) * Math.PI * 2 + m.wingPhase;
+            const gr = (3.5 + glow) * p;
+            px(Math.cos(ga) * gr - p * 0.4, Math.sin(ga) * gr - p * 0.4 + bob, p * 0.8, p * 0.8);
+          }
+          ctx.globalAlpha = m.flashTimer > 0 ? 0.5 : 1;
         }
-      }
 
-      ctx.fillStyle = c.eye;
-      px(-1.5 * p, -1.5 * p, 1.2 * p, 1.2 * p);
-      px(0.5 * p, -1.5 * p, 1.2 * p, 1.2 * p);
-      ctx.fillStyle = "#2c3e50";
-      px(-1.2 * p, 1 * p, 2.4 * p, 1.2 * p);
-      ctx.fillStyle = "#ecf0f1";
-      const eating = m.eatingTimer > 0.3;
-      const jawOpen = eating ? Math.abs(Math.sin(m.eatingTimer * 12)) * p * 1.2 : 0;
-      px(-0.8 * p, 1 * p + jawOpen, 0.6 * p, 0.6 * p);
-      px(0.3 * p, 1 * p + jawOpen, 0.6 * p, 0.6 * p);
-      ctx.fillStyle = c.wing; ctx.globalAlpha = 0.35;
-      for (let i = 0; i < 4; i++) {
-        const tx = Math.sin(time * 3.5 + i * 1.8 + m.wingPhase) * s * 0.9;
-        const ty = Math.cos(time * 2.5 + i * 2.5 + m.wingPhase) * s * 0.4 + s;
-        ctx.fillRect(tx - p * 0.6, ty - p * 0.6, p * 1.2, p * 1.2);
+        // Body: blocky hexagonal shape
+        ctx.fillStyle = sc.body;
+        px(-2.5 * p, -1.5 * p + bob, 5 * p, 3 * p); // wide center
+        px(-1.5 * p, -2.5 * p + bob, 3 * p, 1 * p); // top
+        px(-1.5 * p, 1.5 * p + bob, 3 * p, 1 * p);  // bottom
+
+        // Dark inner
+        ctx.fillStyle = "#1a1a2e";
+        px(-1.5 * p, -1 * p + bob, 3 * p, 2.5 * p);
+
+        // Eye white
+        ctx.fillStyle = "#ecf0f1";
+        px(-1 * p, -0.5 * p + bob, 2 * p, 1.5 * p);
+
+        // Pupil — tracks target
+        let pupilDx = 0, pupilDy = 0;
+        if (m.targetEl) {
+          const tRect = m.targetEl.getBoundingClientRect();
+          const angle = Math.atan2(
+            tRect.top + tRect.height / 2 - m.y,
+            tRect.left + tRect.width / 2 - m.x,
+          );
+          pupilDx = Math.cos(angle) * p * 0.4;
+          pupilDy = Math.sin(angle) * p * 0.4;
+        }
+        ctx.fillStyle = sc.eye;
+        px(-0.5 * p + pupilDx, -0.2 * p + bob + pupilDy, 1 * p, 1 * p);
+        // Highlight
+        ctx.fillStyle = "#ecf0f1";
+        px(-0.5 * p + pupilDx + p * 0.15, -0.2 * p + bob + pupilDy + p * 0.1, p * 0.3, p * 0.3);
+
+        // "Legs" / antenna — small pixel appendages
+        ctx.fillStyle = sc.ring;
+        px(-3 * p, -0.5 * p + bob, 0.8 * p, 0.8 * p); // left
+        px(2.2 * p, -0.5 * p + bob, 0.8 * p, 0.8 * p); // right
+        px(-0.4 * p, 2.5 * p + bob, 0.8 * p, 0.8 * p); // bottom barrel
+
+        // HP pips above
+        if (m.hp > 1) {
+          ctx.fillStyle = sc.ring;
+          for (let i = 0; i < m.hp; i++) {
+            const pipX = -((m.hp - 1) * p * 0.8) / 2 + i * p * 0.8;
+            px(pipX - p * 0.3, -3.5 * p + bob, p * 0.6, p * 0.5);
+          }
+        }
+      } else {
+        // ── Moth: original pixel art ──
+        const c = MONSTER_COLORS[m.colorIdx];
+        const p = s / 7;
+        const wingUp = Math.sin(m.wingPhase) * 0.6;
+        ctx.fillStyle = c.wing;
+        px(-4.5 * p, (-1 + wingUp) * p, 2.5 * p, 3.5 * p);
+        px(-3.5 * p, (-2.5 + wingUp) * p, 1.5 * p, 1.5 * p);
+        px(2 * p, (-1 + wingUp) * p, 2.5 * p, 3.5 * p);
+        px(2 * p, (-2.5 + wingUp) * p, 1.5 * p, 1.5 * p);
+        ctx.fillStyle = c.body;
+        px(-2.5 * p, -2.5 * p, 5 * p, 6 * p);
+        px(-1.5 * p, -3.5 * p, 3 * p, 1 * p);
+        px(-1.5 * p, 3.5 * p, 3 * p, 1 * p);
+
+        if (m.isBig && m.hp > 1) {
+          ctx.fillStyle = "#e74c3c";
+          for (let i = 0; i < m.hp; i++) {
+            const pipX = -((m.hp - 1) * p * 0.8) / 2 + i * p * 0.8;
+            ctx.fillRect(pipX - p * 0.3, -4 * p, p * 0.6, p * 0.5);
+          }
+        }
+
+        ctx.fillStyle = c.eye;
+        px(-1.5 * p, -1.5 * p, 1.2 * p, 1.2 * p);
+        px(0.5 * p, -1.5 * p, 1.2 * p, 1.2 * p);
+        ctx.fillStyle = "#2c3e50";
+        px(-1.2 * p, 1 * p, 2.4 * p, 1.2 * p);
+        ctx.fillStyle = "#ecf0f1";
+        const eating = m.eatingTimer > 0.3;
+        const jawOpen = eating ? Math.abs(Math.sin(m.eatingTimer * 12)) * p * 1.2 : 0;
+        px(-0.8 * p, 1 * p + jawOpen, 0.6 * p, 0.6 * p);
+        px(0.3 * p, 1 * p + jawOpen, 0.6 * p, 0.6 * p);
+        ctx.fillStyle = c.wing; ctx.globalAlpha = 0.35;
+        for (let i = 0; i < 4; i++) {
+          const tx = Math.sin(time * 3.5 + i * 1.8 + m.wingPhase) * s * 0.9;
+          const ty = Math.cos(time * 2.5 + i * 2.5 + m.wingPhase) * s * 0.4 + s;
+          ctx.fillRect(tx - p * 0.6, ty - p * 0.6, p * 1.2, p * 1.2);
+        }
       }
       ctx.restore();
     }
@@ -771,6 +1029,7 @@ export class MonsterManager {
       if (m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
     }
     this.monsters = [];
+    this.projectiles = [];
     this.particles = [];
     this.eatParticles = [];
   }
