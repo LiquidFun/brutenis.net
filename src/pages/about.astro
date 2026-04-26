@@ -1,5 +1,6 @@
 ---
 import BaseLayout from "@layouts/BaseLayout.astro";
+import VerletDiagram from "@components/VerletDiagram.astro";
 ---
 
 <BaseLayout title="About" description="About Brutenis">
@@ -36,6 +37,17 @@ import BaseLayout from "@layouts/BaseLayout.astro";
       enable attackers, monsters will start flying at you and you can
       defend them with the yarn ball. Can you reach a high score?
     </p>
+    <p>
+      The rope is a chain of points connected by segments. Each frame, a
+      constraint solver tries to adjust every segment back to a target length
+      — but each correction only moves points halfway, and fixing one segment
+      can undo corrections on its neighbors. This is what gives the rope its
+      stretchy, organic feel. The diagram below shows a simplified version
+      with 5 points; the real rope has 20 points, applies gravity, and each
+      point carries momentum from its previous position — so the yarn ball
+      swings and bounces naturally.
+    </p>
+    <VerletDiagram />
     <p>
       The source code is available on <a href="https://github.com/LiquidFun/brutenis.net">GitHub</a>.
     </p>
