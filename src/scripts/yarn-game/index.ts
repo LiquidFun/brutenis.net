@@ -132,8 +132,19 @@ function areAttackersEnabled(): boolean {
   return check ? check() : true;
 }
 
+let cachedIsListingPage = false;
+
+function refreshCaches() {
+  cachedIsListingPage = document.querySelectorAll(".post-card, .project-card, .ctf-card").length > 0;
+  hudDisableLabel = document.getElementById("hud-disable-label");
+  hudSeparator = document.getElementById("hud-separator");
+  hudScoreWrap = document.getElementById("game-score-wrap");
+  hudScoreEl = document.getElementById("game-score");
+  if (monsters) monsters.refreshCardCache();
+}
+
 function isListingPage(): boolean {
-  return document.querySelectorAll(".post-card, .project-card, .ctf-card").length > 0;
+  return cachedIsListingPage;
 }
 
 function resize() {
@@ -142,12 +153,17 @@ function resize() {
   canvas.height = window.innerHeight;
 }
 
+let hudDisableLabel: HTMLElement | null = null;
+let hudSeparator: HTMLElement | null = null;
+let hudScoreWrap: HTMLElement | null = null;
+let hudScoreEl: HTMLElement | null = null;
+
 function updateHUD() {
-  const disableLabel = document.getElementById("hud-disable-label");
-  const separator = document.getElementById("hud-separator");
-  const scoreWrap = document.getElementById("game-score-wrap");
-  const scoreEl = document.getElementById("game-score");
   if (!monsters) return;
+  const disableLabel = hudDisableLabel;
+  const separator = hudSeparator;
+  const scoreWrap = hudScoreWrap;
+  const scoreEl = hudScoreEl;
 
   const s = monsters.score;
   if (s === 0) {
@@ -310,6 +326,7 @@ function init() {
   resize();
   monsters = new MonsterManager();
   upgrades = new UpgradeManager();
+  refreshCaches();
 
   // Wire up upgrade ↔ monster interactions
   upgrades.setDamageMapAccess({
@@ -378,14 +395,17 @@ document.addEventListener("astro:page-load", () => {
   initCheatPanel();
   if (!initialized) {
     init();
-  } else if (monsters) {
-    // Clear game over visuals when navigating away
-    setGameOverVisuals(false);
-    if (isListingPage()) {
-      monsters.retarget();
-    } else {
-      monsters.cleanup();
-      if (upgrades) upgrades.cleanup();
+  } else {
+    refreshCaches();
+    if (monsters) {
+      // Clear game over visuals when navigating away
+      setGameOverVisuals(false);
+      if (isListingPage()) {
+        monsters.retarget();
+      } else {
+        monsters.cleanup();
+        if (upgrades) upgrades.cleanup();
+      }
     }
   }
 });

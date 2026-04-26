@@ -43,48 +43,48 @@ interface CrackTree {
 }
 
 const cardCracks = new Map<string, CrackTree[]>();
+const crackLastUpdate = new Map<string, number>();
+const CRACK_UPDATE_INTERVAL = 1.0; // seconds between crack growth/render updates
 
-/** Extend tip nodes of a crack tree — balanced growth rate regardless of tip count */
-function extendCrackTree(tree: CrackTree, amount: number) {
-  const tips: CrackNode[] = [];
-  let totalNodes = 0;
-  function walk(n: CrackNode) {
-    totalNodes++;
-    if (n.children.length === 0) tips.push(n);
-    else for (const c of n.children) walk(c);
-  }
-  walk(tree.root);
+/** Extend tip nodes of a crack tree — grows multiple nodes per call */
+function extendCrackTree(tree: CrackTree, growCount: number = 10) {
+  for (let g = 0; g < growCount; g++) {
+    const tips: CrackNode[] = [];
+    function walk(n: CrackNode) {
+      if (n.children.length === 0) tips.push(n);
+      else for (const c of n.children) walk(c);
+    }
+    walk(tree.root);
 
-  if (tips.length === 0) return;
+    if (tips.length === 0) return;
 
-  // Grow only 1 tip per call — pick one at random
-  const tip = tips[Math.floor(Math.random() * tips.length)];
+    const tip = tips[Math.floor(Math.random() * tips.length)];
 
-  const jitter = (Math.random() - 0.5) * (0.5 + tip.depth * 0.1);
-  const newAngle = tip.angle + jitter;
-  // Longer segments for bolder cracks
-  const len = Math.max(0.02, 0.05 - tip.depth * 0.003) + Math.random() * 0.03;
-  const child: CrackNode = {
-    x: tip.x + Math.cos(newAngle) * len,
-    y: tip.y + Math.sin(newAngle) * len,
-    angle: newAngle,
-    depth: tip.depth + 1,
-    children: [],
-  };
-  tip.children.push(child);
-
-  // Branch only every ~8 segments, with a wide fork
-  if (tips.length < 6 && tip.depth > 2 && Math.random() < 0.12) {
-    const sign = Math.random() > 0.5 ? 1 : -1;
-    const branchAngle = tip.angle + sign * (0.6 + Math.random() * 0.8);
-    const blen = len * (0.6 + Math.random() * 0.3);
-    tip.children.push({
-      x: tip.x + Math.cos(branchAngle) * blen,
-      y: tip.y + Math.sin(branchAngle) * blen,
-      angle: branchAngle,
+    const jitter = (Math.random() - 0.5) * (0.5 + tip.depth * 0.1);
+    const newAngle = tip.angle + jitter;
+    const len = Math.max(0.02, 0.05 - tip.depth * 0.003) + Math.random() * 0.03;
+    const child: CrackNode = {
+      x: tip.x + Math.cos(newAngle) * len,
+      y: tip.y + Math.sin(newAngle) * len,
+      angle: newAngle,
       depth: tip.depth + 1,
       children: [],
-    });
+    };
+    tip.children.push(child);
+
+    // Branch with a wide fork
+    if (tips.length < 6 && tip.depth > 2 && Math.random() < 0.12) {
+      const sign = Math.random() > 0.5 ? 1 : -1;
+      const branchAngle = tip.angle + sign * (0.6 + Math.random() * 0.8);
+      const blen = len * (0.6 + Math.random() * 0.3);
+      tip.children.push({
+        x: tip.x + Math.cos(branchAngle) * blen,
+        y: tip.y + Math.sin(branchAngle) * blen,
+        angle: branchAngle,
+        depth: tip.depth + 1,
+        children: [],
+      });
+    }
   }
 }
 
@@ -144,7 +144,7 @@ function applyCrackOverlay(el: Element, pct: number) {
     html.appendChild(overlay);
   }
   const trees = cardCracks.get(key) || [];
-  const rect = html.getBoundingClientRect();
+  const rect = getCachedRect(html);
   const strokeW = 1.8 + pct * 2.2;
   const alpha = 0.35 + pct * 0.45;
   overlay.innerHTML = renderCracks(trees, rect.width, rect.height, strokeW, alpha);
@@ -253,6 +253,35 @@ function pointOnPerimeter(rect: DOMRect, t: number): { x: number; y: number } {
 // ── Scroll tracking ──
 let prevScrollY = 0;
 
+// ── Cached card elements (refreshed on navigation) ──
+let cachedCardElements: Element[] = [];
+
+// ── Frame-scoped rect cache ──
+let rectCacheFrame = -1;
+const rectCache = new Map<Element, DOMRect>();
+
+export function getCachedRect(el: Element): DOMRect {
+  let cached = rectCache.get(el);
+  if (cached) return cached;
+  cached = (el as HTMLElement).getBoundingClientRect();
+  rectCache.set(el, cached);
+  return cached;
+}
+
+function newRectCacheFrame() {
+  rectCacheFrame++;
+  rectCache.clear();
+}
+
+// ── In-place array compaction (avoids .filter() allocation) ──
+function compact<T>(arr: T[], keep: (item: T) => boolean): void {
+  let w = 0;
+  for (let i = 0; i < arr.length; i++) {
+    if (keep(arr[i])) { if (i !== w) arr[w] = arr[i]; w++; }
+  }
+  arr.length = w;
+}
+
 // ── Manager ──
 
 export class MonsterManager {
@@ -284,10 +313,13 @@ export class MonsterManager {
     this.mobile = window.matchMedia("(hover: none)").matches;
   }
 
+  refreshCardCache() {
+    cachedCardElements = [...document.querySelectorAll(".post-card, .project-card, .ctf-card")];
+  }
+
   getAliveCards(): Element[] {
     const destroyed = getDestroyedSet();
-    return [...document.querySelectorAll(".post-card, .project-card, .ctf-card")]
-      .filter(el => !destroyed.has(cardKey(el)));
+    return cachedCardElements.filter(el => !destroyed.has(cardKey(el)));
   }
 
   cardKey(el: Element): string {
@@ -329,7 +361,7 @@ export class MonsterManager {
     const cards = this.getAliveCards();
     if (cards.length === 0) return null;
     const card = cards[Math.floor(Math.random() * cards.length)];
-    const rect = card.getBoundingClientRect();
+    const rect = getCachedRect(card);
     const t = Math.random();
     const pt = pointOnPerimeter(rect, t);
     return { x: pt.x, y: pt.y, t, el: card };
@@ -443,8 +475,10 @@ export class MonsterManager {
       if (!m.alive || m.flashTimer > 0) continue;
       const dx = m.x - ballX;
       const dy = m.y - ballY;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist < m.hitRadius + ballRadius) {
+      const distSq = dx * dx + dy * dy;
+      const hitThreshold = m.hitRadius + ballRadius;
+      if (distSq < hitThreshold * hitThreshold) {
+        const dist = Math.sqrt(distSq);
         const nx = dist > 0 ? dx / dist : 0;
         const ny = dist > 0 ? dy / dist : -1;
 
@@ -531,16 +565,20 @@ export class MonsterManager {
     damageMap.set(key, next);
     const pct = next / MAX_CARD_HP;
 
-    // Grow crack tree on the card
-    const rect = (el as HTMLElement).getBoundingClientRect();
-    const lx = (hitX - rect.left) / rect.width;
-    const ly = (hitY - rect.top) / rect.height;
-    const cx = 0.5, cy = 0.5;
-    const angle = Math.atan2(cy - ly, cx - lx);
-    const tree = getOrCreateCrackTree(key, sourceId, lx, ly, angle);
-    extendCrackTree(tree, dmg);
-
-    if (pct > 0.05) applyCrackOverlay(el, pct);
+    // Grow crack tree on the card (throttled to once per second per card)
+    const now = performance.now() / 1000;
+    const lastUpdate = crackLastUpdate.get(key) || 0;
+    if (now - lastUpdate >= CRACK_UPDATE_INTERVAL) {
+      crackLastUpdate.set(key, now);
+      const rect = getCachedRect(el);
+      const lx = (hitX - rect.left) / rect.width;
+      const ly = (hitY - rect.top) / rect.height;
+      const cx = 0.5, cy = 0.5;
+      const angle = Math.atan2(cy - ly, cx - lx);
+      const tree = getOrCreateCrackTree(key, sourceId, lx, ly, angle);
+      extendCrackTree(tree);
+      if (pct > 0.05) applyCrackOverlay(el, pct);
+    }
 
     // Progressive grayscale as damage increases
     const html = el as HTMLElement;
@@ -567,7 +605,7 @@ export class MonsterManager {
 
   private restoreCardVisuals() {
     const destroyed = getDestroyedSet();
-    for (const el of document.querySelectorAll(".post-card, .project-card, .ctf-card")) {
+    for (const el of cachedCardElements) {
       const key = cardKey(el);
       const html = el as HTMLElement;
       if (destroyed.has(key)) {
@@ -586,8 +624,7 @@ export class MonsterManager {
         }
       }
     }
-    if (this.getAliveCards().length === 0 &&
-        document.querySelectorAll(".post-card, .project-card, .ctf-card").length > 0) {
+    if (this.getAliveCards().length === 0 && cachedCardElements.length > 0) {
       this.gameOver = true;
     }
   }
@@ -602,8 +639,7 @@ export class MonsterManager {
   retarget() {
     this.restoreCardVisuals();
     this.gameOver = false;
-    if (this.getAliveCards().length === 0 &&
-        document.querySelectorAll(".post-card, .project-card, .ctf-card").length > 0) {
+    if (this.getAliveCards().length === 0 && cachedCardElements.length > 0) {
       this.gameOver = true;
     }
     for (const m of this.monsters) {
@@ -614,6 +650,7 @@ export class MonsterManager {
   }
 
   update(dt: number) {
+    newRectCacheFrame();
     if (this.levelUpTimer > 0) this.levelUpTimer -= dt;
 
     // Track scroll — shift all monsters & particles by scroll delta
@@ -634,7 +671,10 @@ export class MonsterManager {
 
     this.spawnTimer += dt;
 
-    const newLevel = 1 + this.levelThresholds.filter(t => this.score >= t).length;
+    let newLevel = 1;
+    for (const t of this.levelThresholds) {
+      if (this.score >= t) newLevel++; else break;
+    }
     if (newLevel > this.level) {
       this.prevLevel = this.level;
       this.level = newLevel;
@@ -698,7 +738,7 @@ export class MonsterManager {
       if (m.isShooter) {
         // ── Shooter: orbit around target card and fire projectiles ──
         if (!m.targetEl) continue;
-        const rect = m.targetEl.getBoundingClientRect();
+        const rect = getCachedRect(m.targetEl);
         const ccx = rect.left + rect.width / 2;
         const ccy = rect.top + rect.height / 2;
         const orbitR = Math.max(rect.width, rect.height) / 2 + SHOOTER_ORBIT_PADDING;
@@ -709,9 +749,10 @@ export class MonsterManager {
 
         const dx = goalX - m.x;
         const dy = goalY - m.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
+        const distSq = dx * dx + dy * dy;
         const shooterSpeed = 80 * speedMult * 0.5;
-        if (dist > 3) {
+        if (distSq > 9) {
+          const dist = Math.sqrt(distSq);
           m.vx += (dx / dist) * shooterSpeed * dt * 10;
           m.vy += (dy / dist) * shooterSpeed * dt * 10;
           const spd = Math.sqrt(m.vx * m.vx + m.vy * m.vy);
@@ -738,28 +779,29 @@ export class MonsterManager {
 
       // ── Moth: move toward card perimeter and eat ──
       if (m.targetEl) {
-        const rect = m.targetEl.getBoundingClientRect();
+        const rect = getCachedRect(m.targetEl);
         const pt = pointOnPerimeter(rect, m.targetT);
         m.targetX = pt.x; m.targetY = pt.y;
       }
 
       const dx = m.targetX - m.x;
       const dy = m.targetY - m.y;
-      const dist = Math.sqrt(dx * dx + dy * dy);
+      const distSq = dx * dx + dy * dy;
       const sizeSpeedFactor = m.isHuge ? 0.35 : m.isBig ? 0.55 : 1;
 
-      if (dist > 5) {
+      if (distSq > 25) {
+        const dist = Math.sqrt(distSq);
         const accel = 200 * speedMult * sizeSpeedFactor;
         m.vx += (dx / dist) * accel * dt;
         m.vy += (dy / dist) * accel * dt;
-        const spd = Math.sqrt(m.vx * m.vx + m.vy * m.vy);
+        const spdSq = m.vx * m.vx + m.vy * m.vy;
         const maxSpd = 220 * speedMult * sizeSpeedFactor;
-        if (spd > maxSpd) { m.vx = (m.vx / spd) * maxSpd; m.vy = (m.vy / spd) * maxSpd; }
+        if (spdSq > maxSpd * maxSpd) { const spd = Math.sqrt(spdSq); m.vx = (m.vx / spd) * maxSpd; m.vy = (m.vy / spd) * maxSpd; }
         m.x += m.vx * dt; m.y += m.vy * dt;
         m.vx *= 0.96; m.vy *= 0.96;
       }
 
-      if (dist < 25) {
+      if (distSq < 625) {
         m.eatingTimer += dt;
         if (m.targetEl && m.eatingTimer > 0.3) {
           const shake = Math.sin(m.eatingTimer * 25) * (m.isHuge ? 8 : m.isBig ? 5 : 3);
@@ -794,7 +836,7 @@ export class MonsterManager {
     for (const m of this.monsters) {
       if (!m.alive && m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
     }
-    this.monsters = this.monsters.filter(m => m.alive);
+    compact(this.monsters, m => m.alive);
   }
 
   checkProjectileHit(ballX: number, ballY: number, ballRadius: number) {
@@ -829,7 +871,7 @@ export class MonsterManager {
   private updateProjectiles(dt: number) {
     for (const p of this.projectiles) {
       // Home toward target card center
-      const rect = p.targetEl.getBoundingClientRect();
+      const rect = getCachedRect(p.targetEl);
       const cx = rect.left + rect.width / 2;
       const cy = rect.top + rect.height / 2;
       const dx = cx - p.x;
@@ -857,7 +899,7 @@ export class MonsterManager {
         p.life = 0;
       }
     }
-    this.projectiles = this.projectiles.filter(p => p.life > 0);
+    compact(this.projectiles, p => p.life > 0);
   }
 
   private updateParticles(dt: number) {
@@ -866,16 +908,16 @@ export class MonsterManager {
     for (const p of this.particles) {
       if (ballPos) {
         const dx = p.x - ballPos.x; const dy = p.y - ballPos.y;
-        const d = Math.sqrt(dx * dx + dy * dy);
-        if (d < 30 && d > 0) { p.vx += (dx / d) * 800 / (d + 5); p.vy += (dy / d) * 800 / (d + 5); }
+        const dSq = dx * dx + dy * dy;
+        if (dSq < 900 && dSq > 0) { const d = Math.sqrt(dSq); p.vx += (dx / d) * 800 / (d + 5); p.vy += (dy / d) * 800 / (d + 5); }
       }
       p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 150 * dt; p.vx *= 0.99; p.life -= dt;
     }
-    this.particles = this.particles.filter(p => p.life > 0);
+    compact(this.particles, p => p.life > 0);
     for (const p of this.eatParticles) {
       p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 100 * dt; p.life -= dt;
     }
-    this.eatParticles = this.eatParticles.filter(p => p.life > 0);
+    compact(this.eatParticles, p => p.life > 0);
   }
 
   draw(ctx: CanvasRenderingContext2D, time: number) {
@@ -883,16 +925,18 @@ export class MonsterManager {
       ctx.fillRect(Math.round(x), Math.round(y), w, h);
     };
 
+    const prevAlpha = ctx.globalAlpha;
     for (const p of this.eatParticles) {
-      ctx.save(); ctx.globalAlpha = Math.min(1, p.life * 2.5); ctx.fillStyle = p.color;
-      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size); ctx.restore();
+      ctx.globalAlpha = Math.min(1, p.life * 2.5); ctx.fillStyle = p.color;
+      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
     }
     for (const p of this.particles) {
-      ctx.save(); const t = p.life / p.maxLife;
+      const t = p.life / p.maxLife;
       ctx.globalAlpha = Math.min(1, t * 2.5); ctx.fillStyle = p.color;
       const s = p.size * (0.3 + t * 0.7);
-      ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s); ctx.restore();
+      ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
     }
+    ctx.globalAlpha = prevAlpha;
 
     if (this.levelUpTimer > 0) {
       ctx.save();
@@ -954,7 +998,7 @@ export class MonsterManager {
     // ── Draw projectiles (pixel art style) ──
     for (const proj of this.projectiles) {
       ctx.save();
-      const rect = proj.targetEl.getBoundingClientRect();
+      const rect = getCachedRect(proj.targetEl);
       const tcx = rect.left + rect.width / 2;
       const tcy = rect.top + rect.height / 2;
       const a = Math.atan2(tcy - proj.y, tcx - proj.x);
@@ -1090,7 +1134,7 @@ export class MonsterManager {
         // Pupil — tracks target
         let pupilDx = 0, pupilDy = 0;
         if (m.targetEl) {
-          const tRect = m.targetEl.getBoundingClientRect();
+          const tRect = getCachedRect(m.targetEl);
           const angle = Math.atan2(
             tRect.top + tRect.height / 2 - m.y,
             tRect.left + tRect.width / 2 - m.x,

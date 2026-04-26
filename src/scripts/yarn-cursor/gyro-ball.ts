@@ -27,7 +27,10 @@ export class GyroBall {
   private prevGamma = 0;
   private hasOrientation = false;
   visual: YarnBall;
-  private trail: TrailPoint[] = [];
+  private trail: TrailPoint[] = new Array(TRAIL_LENGTH);
+  private trailHead = 0;
+  private trailCount = 0;
+  private trailColors: string[];
   private gravityScale: number;
 
   get radius(): number {
@@ -44,6 +47,17 @@ export class GyroBall {
     this.y = y;
     this.gravityScale = gravityScale;
     this.visual = new YarnBall(GYRO_BALL_RADIUS, color);
+
+    // Pre-compute trail RGBA colors
+    const m = color.match(/^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i);
+    const r = m ? parseInt(m[1], 16) : 255;
+    const g = m ? parseInt(m[2], 16) : 107;
+    const b = m ? parseInt(m[3], 16) : 107;
+    this.trailColors = [];
+    for (let i = 0; i < TRAIL_LENGTH; i++) {
+      const t = (i + 1) / TRAIL_LENGTH;
+      this.trailColors.push(`rgba(${r}, ${g}, ${b}, ${(t * 0.5).toFixed(3)})`);
+    }
   }
 
   respawn(w: number, h: number) {
@@ -53,7 +67,8 @@ export class GyroBall {
     const speed = 200 + Math.random() * 150;
     this.vx = Math.cos(angle) * speed;
     this.vy = Math.sin(angle) * speed;
-    this.trail = [];
+    this.trailHead = 0;
+    this.trailCount = 0;
   }
 
   setOrientation(beta: number, gamma: number, dt: number) {
@@ -86,8 +101,9 @@ export class GyroBall {
     this.flickY *= 0.85;
 
     // Cap max speed
-    const spd = Math.sqrt(this.vx * this.vx + this.vy * this.vy);
-    if (spd > MAX_SPEED) {
+    const spdSq = this.vx * this.vx + this.vy * this.vy;
+    if (spdSq > MAX_SPEED * MAX_SPEED) {
+      const spd = Math.sqrt(spdSq);
       this.vx = (this.vx / spd) * MAX_SPEED;
       this.vy = (this.vy / spd) * MAX_SPEED;
     }
@@ -111,28 +127,28 @@ export class GyroBall {
       this.vy = -Math.abs(this.vy) * RESTITUTION;
     }
 
-    this.trail.push({ x: this.x, y: this.y });
-    if (this.trail.length > TRAIL_LENGTH) {
-      this.trail.shift();
-    }
+    this.trail[this.trailHead] = { x: this.x, y: this.y };
+    this.trailHead = (this.trailHead + 1) % TRAIL_LENGTH;
+    if (this.trailCount < TRAIL_LENGTH) this.trailCount++;
 
     this.visual.update({ x: this.vx * dt, y: this.vy * dt });
   }
 
   draw(ctx: CanvasRenderingContext2D) {
-    // Draw trail
-    const len = this.trail.length;
-    if (len >= 2) {
-      for (let i = 1; i < len; i++) {
-        const t = i / len;
-        const prev = this.trail[i - 1];
-        const curr = this.trail[i];
+    // Draw trail using ring buffer
+    if (this.trailCount >= 2) {
+      ctx.lineCap = "round";
+      for (let i = 1; i < this.trailCount; i++) {
+        const prevIdx = (this.trailHead - this.trailCount + i - 1 + TRAIL_LENGTH) % TRAIL_LENGTH;
+        const currIdx = (this.trailHead - this.trailCount + i + TRAIL_LENGTH) % TRAIL_LENGTH;
+        const prev = this.trail[prevIdx];
+        const curr = this.trail[currIdx];
+        const t = i / this.trailCount;
         ctx.beginPath();
         ctx.moveTo(prev.x, prev.y);
         ctx.lineTo(curr.x, curr.y);
-        ctx.strokeStyle = `rgba(255, 107, 107, ${t * 0.5})`;
+        ctx.strokeStyle = this.trailColors[i];
         ctx.lineWidth = t * this.radius * 1.5;
-        ctx.lineCap = "round";
         ctx.stroke();
       }
     }

@@ -1,3 +1,5 @@
+import { getCachedRect } from "./monsters";
+
 // ── Upgrade Types & Interfaces ──
 
 export type UpgradeType =
@@ -145,10 +147,11 @@ export class UpgradeManager {
   }
 
   private overlapsCard(x: number, y: number): boolean {
-    const cards = document.querySelectorAll(".post-card, .project-card, .ctf-card");
+    if (!this.dmAccess) return false;
+    const cards = this.dmAccess.getAliveCards();
     const pad = 40;
     for (const card of cards) {
-      const r = card.getBoundingClientRect();
+      const r = getCachedRect(card);
       if (
         x > r.left - pad && x < r.right + pad &&
         y > r.top - pad && y < r.bottom + pad
@@ -165,8 +168,8 @@ export class UpgradeManager {
       for (const ball of balls) {
         const dx = pickup.x - ball.x;
         const dy = pickup.y - ball.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < pickup.radius + ball.radius) {
+        const threshold = pickup.radius + ball.radius;
+        if (dx * dx + dy * dy < threshold * threshold) {
           pickup.collected = true;
           pickup.collectAnim = 1;
           this.applyUpgrade(pickup.type, level);
@@ -279,8 +282,9 @@ export class UpgradeManager {
       for (const ball of balls) {
         const dx = m.x - ball.x;
         const dy = m.y - ball.y;
-        const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < MAGNET_RADIUS && dist > 5) {
+        const distSq = dx * dx + dy * dy;
+        if (distSq < MAGNET_RADIUS * MAGNET_RADIUS && distSq > 25) {
+          const dist = Math.sqrt(distSq);
           // Pull toward ball (negative = attraction)
           const strength = MAGNET_FORCE * (1 - dist / MAGNET_RADIUS);
           m.vx -= (dx / dist) * strength * dt;
@@ -335,10 +339,16 @@ export class UpgradeManager {
         pickup.timer -= dt;
       }
     }
-    // Remove fully animated or despawned pickups
-    this.pickups = this.pickups.filter(
-      (p) => (p.collected && p.collectAnim > 0) || (!p.collected && p.timer > 0),
-    );
+    // Remove fully animated or despawned pickups (in-place to avoid allocation)
+    let w = 0;
+    for (let i = 0; i < this.pickups.length; i++) {
+      const p = this.pickups[i];
+      if ((p.collected && p.collectAnim > 0) || (!p.collected && p.timer > 0)) {
+        if (i !== w) this.pickups[w] = p;
+        w++;
+      }
+    }
+    this.pickups.length = w;
 
     // Shield regen
     if (this.state.shieldActive && this.state.shieldHP < MAX_SHIELD_HP) {
@@ -518,10 +528,8 @@ export class UpgradeManager {
   }
 
   private drawShield(ctx: CanvasRenderingContext2D, time: number) {
-    if (!this.state.shieldActive) return;
-    const cards = document.querySelectorAll(
-      ".post-card, .project-card, .ctf-card",
-    );
+    if (!this.state.shieldActive || !this.dmAccess) return;
+    const cards = this.dmAccess.getAliveCards();
     if (cards.length === 0) return;
 
     const hpFrac = this.state.shieldHP / MAX_SHIELD_HP;
@@ -537,7 +545,7 @@ export class UpgradeManager {
     ctx.lineDashOffset = -time * 20;
 
     for (const card of cards) {
-      const r = card.getBoundingClientRect();
+      const r = getCachedRect(card);
       const pad = 6;
       const radius = 8;
       this.roundRect(

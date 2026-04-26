@@ -83,7 +83,7 @@ export class VerletRope {
     }
   }
 
-  getPoints(): Vec2[] {
-    return this.points.map((p) => ({ x: p.x, y: p.y }));
+  getPoints(): ReadonlyArray<Vec2> {
+    return this.points;
   }
 }

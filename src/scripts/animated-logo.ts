@@ -7,9 +7,6 @@ let canvas: HTMLCanvasElement | null = null;
 let ctx: CanvasRenderingContext2D | null = null;
 let initialized = false;
 let currentColor = YARN_COLORS[0];
-let lastTime = 0;
-let animId = 0;
-let redrawTimer = 0;
 
 const TEXT = "brutenis.net";
 const FONT_SIZE = 36;
@@ -94,20 +91,15 @@ function drawLogo() {
   }
 }
 
-function animate(time: number) {
-  if (!ctx || !canvas) return;
+let timerId: ReturnType<typeof setTimeout> | null = null;
 
-  const dt = (time - lastTime) / 1000;
-  lastTime = time;
-  redrawTimer += dt;
-
-  if (redrawTimer >= 1.0) {
-    redrawTimer = 0;
+function scheduleRedraw() {
+  timerId = setTimeout(() => {
+    if (!ctx || !canvas) return;
     generateWobble();
     drawLogo();
-  }
-
-  animId = requestAnimationFrame(animate);
+    scheduleRedraw();
+  }, 1000);
 }
 
 function init() {
@@ -131,8 +123,7 @@ function init() {
   generateWobble();
   drawLogo();
 
-  lastTime = performance.now();
-  animId = requestAnimationFrame(animate);
+  scheduleRedraw();
   initialized = true;
 }
 

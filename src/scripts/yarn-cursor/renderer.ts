@@ -3,7 +3,7 @@ import type { YarnBall } from "./yarn-ball";
 
 export function drawRope(
   ctx: CanvasRenderingContext2D,
-  points: Vec2[],
+  points: ReadonlyArray<Vec2>,
   color: string = "#ff6b6b",
 ) {
   if (points.length < 2) return;
@@ -53,7 +53,7 @@ export function drawRope(
 export function drawYarnBall(
   ctx: CanvasRenderingContext2D,
   ball: YarnBall,
-  points: Vec2[],
+  points: ReadonlyArray<Vec2>,
 ) {
   if (points.length < 2) return;
   const last = points[points.length - 1];
