@@ -103,11 +103,6 @@ export class UpgradeManager {
   // ── Spawn logic ──
 
   checkLevelUp(level: number) {
-    // Expire active upgrade when level changes
-    if (this.activeUpgrade && level > this.activeUpgradeLevel) {
-      this.deactivateUpgrade();
-    }
-
     if (level < FIRST_UPGRADE_LEVEL) return;
     if ((level - FIRST_UPGRADE_LEVEL) % UPGRADE_LEVEL_INTERVAL !== 0) return;
     if (this.spawnedAtLevels.has(level)) return;

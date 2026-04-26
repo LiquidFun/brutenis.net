@@ -18,10 +18,10 @@ const SHOOTER_ORBIT_PADDING = 130;
 const SHOOTER_COOLDOWN = 2.5;
 const SHOOTER_CHARGE_TIME = 0.8;
 const PROJECTILE_SPEED = 250;
-const PROJECTILE_DAMAGE = 0.4;
+const PROJECTILE_DAMAGE = 0.25;
 
 const MAX_CARD_HP = 5;
-const DAMAGE_PER_SECOND = 0.8;
+const DAMAGE_PER_SECOND = 0.5;
 
 // ── Crack system: each monster grows its own crack tree on its target card ──
 
@@ -375,10 +375,10 @@ export class MonsterManager {
     let size: number, hp: number;
     if (isHuge) {
       size = 50 + Math.random() * 15;
-      hp = 5 + Math.floor((this.level - 9) / 2) * 2;
+      hp = 4 + Math.floor((this.level - 9) / 3);
     } else if (isBig) {
       size = 35 + Math.random() * 10;
-      hp = 2 + Math.floor((this.level - 5) / 2);
+      hp = 2 + Math.floor((this.level - 5) / 3);
     } else {
       size = 20 + Math.random() * 8;
       hp = 1;
@@ -695,7 +695,7 @@ export class MonsterManager {
         if (m.targetEl && m.eatingTimer > 0.3) {
           const shake = Math.sin(m.eatingTimer * 25) * (m.isHuge ? 8 : m.isBig ? 5 : 3);
           (m.targetEl as HTMLElement).style.transform = `translateX(${shake}px)`;
-          const dmgMult = m.isHuge ? 2.5 : m.isBig ? 1.5 : 1;
+          const dmgMult = m.isHuge ? 1.8 : m.isBig ? 1.2 : 1;
           const mobileDmg = this.mobile ? 0.5 : 1;
           const lvlDmg = this.level <= 1 ? 0.05 : 1;
           this.damageCardAt(m.targetEl, DAMAGE_PER_SECOND * dmgMult * mobileDmg * lvlDmg * dt, m.x, m.y, m.id);
