@@ -362,9 +362,29 @@ function startGyro() {
     const now = performance.now();
     const dt = (now - lastOrientTime) / 1000;
     lastOrientTime = now;
+
+    let beta = e.beta ?? 0;
+    let gamma = e.gamma ?? 0;
+
+    // Compensate for screen rotation: deviceorientation values are in the
+    // device's physical frame, so rotate them into screen coordinates.
+    const angle = screen.orientation?.angle ?? 0;
+    if (angle === 90) {
+      const b = beta;
+      beta = -gamma;
+      gamma = b;
+    } else if (angle === 180) {
+      beta = -beta;
+      gamma = -gamma;
+    } else if (angle === 270) {
+      const b = beta;
+      beta = gamma;
+      gamma = -b;
+    }
+
     // Feed orientation to ALL gyro balls
     for (const gb of gyroBalls) {
-      gb.setOrientation(e.beta ?? 0, e.gamma ?? 0, dt);
+      gb.setOrientation(beta, gamma, dt);
     }
   });
 
