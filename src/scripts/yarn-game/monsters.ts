@@ -548,7 +548,8 @@ export class MonsterManager {
           (m.targetEl as HTMLElement).style.transform = `translateX(${shake}px)`;
           const dmgMult = m.isHuge ? 2.5 : m.isBig ? 1.5 : 1;
           const mobileDmg = this.mobile ? 0.5 : 1;
-          this.damageCard(m.targetEl, DAMAGE_PER_SECOND * dmgMult * mobileDmg * dt, m);
+          const lvlDmg = this.level <= 1 ? 0.05 : 1;
+          this.damageCard(m.targetEl, DAMAGE_PER_SECOND * dmgMult * mobileDmg * lvlDmg * dt, m);
           if (Math.random() < dt * 8) {
             for (let i = 0; i < 2; i++) {
               const a = Math.random() * Math.PI * 2;

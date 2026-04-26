@@ -1,6 +1,6 @@
 ---
 import BaseLayout from "./BaseLayout.astro";
-import TagPill from "@components/blog/TagPill.astro";
+
 import ProjectGallery from "@components/projects/ProjectGallery.astro";
 
 interface MediaItem {
@@ -53,10 +53,8 @@ const linkEntries = Object.entries(links).filter(([, v]) => v);
           </a>
         ))}
       </div>
-      <div class="flex flex-wrap gap-2">
-        {tags.map((tag) => <TagPill tag={tag} />)}
-      </div>
     </header>
+    <slot name="embed" />
     <ProjectGallery media={media} />
     <div class="prose">
       <slot />
