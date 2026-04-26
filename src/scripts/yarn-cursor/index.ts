@@ -113,6 +113,45 @@ function removeBall() {
 }
 (window as any).__yarnCursorRemoveBall = removeBall;
 
+// ── Apply impulse to the nearest ball (called by game for shield bounce) ──
+function applyImpulse(x: number, y: number, ix: number, iy: number) {
+  if (gyroActive) {
+    let best = gyroBalls[0];
+    let bestDist = Infinity;
+    for (const gb of gyroBalls) {
+      const d = (gb.x - x) ** 2 + (gb.y - y) ** 2;
+      if (d < bestDist) { bestDist = d; best = gb; }
+    }
+    if (best) { best.vx += ix; best.vy += iy; }
+  } else {
+    let bestEntry = ropes[0];
+    let bestDist = Infinity;
+    for (const entry of ropes) {
+      const pts = entry.rope.points;
+      const last = pts[pts.length - 1];
+      const d = (last.x - x) ** 2 + (last.y - y) ** 2;
+      if (d < bestDist) { bestDist = d; bestEntry = entry; }
+    }
+    if (bestEntry) {
+      const pts = bestEntry.rope.points;
+      // Push the last few points to overcome constraint solver
+      const strength = 0.04;
+      const count = Math.min(5, pts.length - 1);
+      for (let i = 0; i < count; i++) {
+        const p = pts[pts.length - 1 - i];
+        if (p.locked) continue;
+        const fade = 1 - i / count;
+        // Move position and inject velocity
+        p.x += ix * strength * fade;
+        p.y += iy * strength * fade;
+        p.prevX -= ix * strength * fade;
+        p.prevY -= iy * strength * fade;
+      }
+    }
+  }
+}
+(window as any).__yarnCursorApplyImpulse = applyImpulse;
+
 // ── Set radius bonus (called by upgrade system) ──
 function setRadiusBonus(bonus: number) {
   ballRadiusBonus = bonus;

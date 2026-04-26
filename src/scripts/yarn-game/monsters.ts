@@ -20,6 +20,11 @@ const SHOOTER_CHARGE_TIME = 0.8;
 const PROJECTILE_SPEED = 250;
 const PROJECTILE_DAMAGE = 0.25;
 
+const SHIELDED_FIRST_LEVEL = 7;
+const SHIELDED_SCORE = 5;
+const SHIELDED_SHIELD_COLOR = "#7f8c8d";
+const SHIELDED_SHIELD_GLOW = "#ecf0f1";
+
 const MAX_CARD_HP = 5;
 const DAMAGE_PER_SECOND = 0.5;
 
@@ -210,6 +215,9 @@ interface Monster {
   isShooter: boolean;
   orbitAngle: number;
   shootCooldown: number;
+  isShielded: boolean;
+  shieldSegments: number;
+  shieldFlash: number[];
 }
 
 let monsterIdCounter = 0;
@@ -338,11 +346,40 @@ export class MonsterManager {
     }
   }
 
+  private spawnShielded(target: { x: number; y: number; t: number; el: Element }) {
+    const pos = this.spawnOffScreen();
+    const segments = [1, 3, 5, 7][Math.floor(Math.random() * 4)];
+    this.monsters.push({
+      x: pos.x, y: pos.y, vx: 0, vy: 0,
+      targetT: target.t, targetX: target.x, targetY: target.y,
+      size: 38, hitRadius: 76,
+      colorIdx: Math.floor(Math.random() * MONSTER_COLORS.length),
+      wingPhase: Math.random() * Math.PI * 2,
+      alive: true, spawnAnim: 0, eatingTimer: 0, targetEl: target.el,
+      hp: 1, isBig: true, isHuge: false, flashTimer: 0,
+      id: `m${monsterIdCounter++}`,
+      isShooter: false, orbitAngle: 0, shootCooldown: 0,
+      isShielded: true, shieldSegments: segments, shieldFlash: new Array(8).fill(0),
+    });
+  }
+
   spawn() {
     if (this.monsters.length >= this.maxMonsters) return;
     if (this.gameOver) return;
     const target = this.findTarget();
     if (!target) return;
+
+    // Level 7: only shielded enemies
+    if (this.level === SHIELDED_FIRST_LEVEL) {
+      this.spawnShielded(target);
+      return;
+    }
+
+    // Shielded chance at level 8+
+    if (this.level > SHIELDED_FIRST_LEVEL && Math.random() < 0.15) {
+      this.spawnShielded(target);
+      return;
+    }
 
     // Shooter chance: 50% at level 5, tapering to 20% at higher levels
     const shooterChance = this.level >= SHOOTER_FIRST_LEVEL
@@ -359,9 +396,9 @@ export class MonsterManager {
         alive: true, spawnAnim: 0, eatingTimer: 0, targetEl: target.el,
         hp: 2, isBig: false, isHuge: false, flashTimer: 0,
         id: `m${monsterIdCounter++}`,
-        isShooter: true,
-        orbitAngle: Math.random() * Math.PI * 2,
+        isShooter: true, orbitAngle: Math.random() * Math.PI * 2,
         shootCooldown: SHOOTER_COOLDOWN,
+        isShielded: false, shieldSegments: 0, shieldFlash: [],
       });
       return;
     }
@@ -396,28 +433,54 @@ export class MonsterManager {
       hp, isBig: isBig || isHuge, isHuge, flashTimer: 0,
       id: `m${monsterIdCounter++}`,
       isShooter: false, orbitAngle: 0, shootCooldown: 0,
+      isShielded: false, shieldSegments: 0, shieldFlash: [],
     });
   }
 
   checkYarnBallHit(ballX: number, ballY: number, ballRadius: number): number {
     let hits = 0;
     for (const m of this.monsters) {
-      if (!m.alive) continue;
+      if (!m.alive || m.flashTimer > 0) continue;
       const dx = m.x - ballX;
       const dy = m.y - ballY;
       const dist = Math.sqrt(dx * dx + dy * dy);
       if (dist < m.hitRadius + ballRadius) {
-        const dmgMul = (window as any).__upgradeDamageMultiplier;
-        m.hp -= dmgMul ? dmgMul() : 1;
         const nx = dist > 0 ? dx / dist : 0;
         const ny = dist > 0 ? dy / dist : -1;
+
+        // Shield check for shielded enemies
+        if (m.isShielded && m.shieldSegments > 0) {
+          const frontAngle = m.targetEl
+            ? Math.atan2(m.targetY - m.y, m.targetX - m.x) : 0;
+          const hitAngle = Math.atan2(ballY - m.y, ballX - m.x);
+          let rel = hitAngle - frontAngle;
+          rel = ((rel % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+          const segIdx = Math.floor((rel + Math.PI / 8) / (Math.PI / 4)) % 8;
+          const half = Math.floor(m.shieldSegments / 2);
+          const shielded = segIdx <= half || segIdx >= 8 - half;
+          if (shielded) {
+            // Bounce off shield — glow + push ball away + brief invulnerability
+            m.shieldFlash[segIdx] = 0.3;
+            m.flashTimer = 0.15;
+            m.vx = nx * 80;
+            m.vy = ny * 80;
+            // Bounce the ball off the shield
+            const impulse = (window as any).__yarnCursorApplyImpulse;
+            if (impulse) impulse(ballX, ballY, -nx * 1500, -ny * 1500);
+            hits++;
+            continue;
+          }
+        }
+
+        const dmgMul = (window as any).__upgradeDamageMultiplier;
+        m.hp -= dmgMul ? dmgMul() : 1;
 
         const c = m.isShooter ? SHOOTER_COLORS[m.colorIdx] : MONSTER_COLORS[m.colorIdx];
 
         if (m.hp <= 0) {
           m.alive = false;
           if (m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
-          this.score++;
+          this.score += m.isShielded ? SHIELDED_SCORE : 1;
           hits++;
           const count = m.isHuge ? 40 : m.isBig ? 28 : 18;
           for (let i = 0; i < count; i++) {
@@ -581,14 +644,19 @@ export class MonsterManager {
     if (this.engaged) {
       this.engageTimer += dt;
       if (this.mobile) {
-        this.maxMonsters = Math.min(10, 2 + Math.floor((this.level - 1) * 0.7) + Math.floor(this.engageTimer / 15));
-        this.spawnInterval = Math.max(0.5, (2.2 / this.level) - this.engageTimer * 0.008);
+        this.maxMonsters = Math.min(6, 2 + Math.floor((this.level - 1) * 0.4) + Math.floor(this.engageTimer / 20));
+        this.spawnInterval = Math.max(0.8, (2.5 / this.level) - this.engageTimer * 0.005);
       } else {
-        this.maxMonsters = Math.min(25, (2 + this.level) + Math.floor(this.engageTimer / 6));
-        this.spawnInterval = Math.max(0.15, (1.2 / this.level) - this.engageTimer * 0.02);
+        this.maxMonsters = Math.min(12, 2 + Math.floor(this.level * 0.6) + Math.floor(this.engageTimer / 10));
+        this.spawnInterval = Math.max(0.3, (1.5 / this.level) - this.engageTimer * 0.01);
       }
     } else {
-      this.maxMonsters = this.mobile ? 2 + Math.floor((this.level - 1) * 0.7) : 2 + this.level;
+      this.maxMonsters = this.mobile ? 2 + Math.floor((this.level - 1) * 0.4) : 2 + Math.floor(this.level * 0.6);
+    }
+    // Level 7: fewer enemies (shielded-only level)
+    if (this.level === SHIELDED_FIRST_LEVEL) {
+      this.maxMonsters = Math.min(this.maxMonsters, this.mobile ? 2 : 3);
+      this.spawnInterval = Math.max(this.spawnInterval, 3);
     }
 
     if (this.spawnTimer > this.spawnInterval) {
@@ -613,6 +681,7 @@ export class MonsterManager {
       m.spawnAnim = Math.min(1, m.spawnAnim + dt * 3);
       m.wingPhase += dt * (m.isShooter ? 3 : m.isBig ? 10 : 14);
       if (m.flashTimer > 0) m.flashTimer -= dt;
+      if (m.isShielded) for (let i = 0; i < 8; i++) if (m.shieldFlash[i] > 0) m.shieldFlash[i] -= dt;
 
       if (m.flashTimer > 0) {
         m.x += m.vx * dt; m.y += m.vy * dt;
@@ -873,6 +942,7 @@ export class MonsterManager {
       ctx.font = "bold 28px Caveat, cursive";
       ctx.fillStyle = "#2d3436";
       const msgs = this.level >= 10 ? "Colossal beasts incoming!"
+        : this.level >= 7 ? "Shielded foes! Hit them from behind!"
         : this.level >= 6 ? "Bigger creatures approaching..."
         : this.level >= 5 ? "Ranged enemies spotted!"
         : "They're getting faster...";
@@ -915,7 +985,75 @@ export class MonsterManager {
       ctx.save(); ctx.translate(m.x, m.y);
       if (m.flashTimer > 0 && Math.sin(m.flashTimer * 40) > 0) ctx.globalAlpha = 0.5;
 
-      if (m.isShooter) {
+      if (m.isShielded) {
+        // ── Shielded: bulky pixel art moth with shield plates ──
+        const sc = MONSTER_COLORS[m.colorIdx];
+        const p = s / 7;
+        const wingUp = Math.sin(m.wingPhase) * 0.4;
+
+        // Wings — wider and thicker than regular moth
+        ctx.fillStyle = sc.wing;
+        px(-5.5 * p, (-1 + wingUp) * p, 3 * p, 4 * p);
+        px(-4.5 * p, (-3 + wingUp) * p, 2 * p, 2 * p);
+        px(2.5 * p, (-1 + wingUp) * p, 3 * p, 4 * p);
+        px(2.5 * p, (-3 + wingUp) * p, 2 * p, 2 * p);
+
+        // Body — wider and taller
+        ctx.fillStyle = sc.body;
+        px(-3 * p, -3 * p, 6 * p, 7 * p);
+        px(-2 * p, -4 * p, 4 * p, 1 * p);
+        px(-2 * p, 4 * p, 4 * p, 1 * p);
+        // Armor plates on body
+        ctx.fillStyle = "#5d6d7e";
+        px(-2.5 * p, -2 * p, 1 * p, 4 * p);
+        px(1.5 * p, -2 * p, 1 * p, 4 * p);
+        px(-1 * p, -3.5 * p, 2 * p, 1 * p);
+        px(-1 * p, 3 * p, 2 * p, 1 * p);
+
+        // Eyes
+        ctx.fillStyle = sc.eye;
+        px(-1.5 * p, -2 * p, 1.2 * p, 1.2 * p);
+        px(0.5 * p, -2 * p, 1.2 * p, 1.2 * p);
+        // Mouth
+        ctx.fillStyle = "#2c3e50";
+        px(-1.2 * p, 0.5 * p, 2.4 * p, 1.2 * p);
+        ctx.fillStyle = "#ecf0f1";
+        const eating = m.eatingTimer > 0.3;
+        const jawOpen = eating ? Math.abs(Math.sin(m.eatingTimer * 12)) * p * 1 : 0;
+        px(-0.8 * p, 0.5 * p + jawOpen, 0.6 * p, 0.6 * p);
+        px(0.3 * p, 0.5 * p + jawOpen, 0.6 * p, 0.6 * p);
+
+        // Trail particles (same as moth)
+        ctx.fillStyle = sc.wing; ctx.globalAlpha = 0.35;
+        for (let i = 0; i < 4; i++) {
+          const tx = Math.sin(time * 3.5 + i * 1.8 + m.wingPhase) * s * 0.9;
+          const ty = Math.cos(time * 2.5 + i * 2.5 + m.wingPhase) * s * 0.4 + s;
+          ctx.fillRect(tx - p * 0.6, ty - p * 0.6, p * 1.2, p * 1.2);
+        }
+        ctx.globalAlpha = 1;
+
+        // ── Shield segments ──
+        const frontAngle = m.targetEl
+          ? Math.atan2(m.targetY - m.y, m.targetX - m.x) : 0;
+        const half = Math.floor(m.shieldSegments / 2);
+        const shieldR = s * 1.4;
+
+        for (let i = 0; i < 8; i++) {
+          const isActive = i <= half || i >= 8 - half;
+          if (!isActive) continue;
+          const segAngle = frontAngle + i * (Math.PI / 4);
+          const flash = m.shieldFlash[i] > 0;
+          ctx.fillStyle = flash ? SHIELDED_SHIELD_GLOW : SHIELDED_SHIELD_COLOR;
+          ctx.globalAlpha = flash ? 0.95 : 0.7;
+          // Draw 3 pixel blocks per segment in an arc
+          for (let j = -1; j <= 1; j++) {
+            const a = segAngle + j * (Math.PI / 16);
+            const bx = Math.cos(a) * shieldR;
+            const by = Math.sin(a) * shieldR;
+            px(bx - p * 0.6, by - p * 0.6, p * 1.2, p * 1.2);
+          }
+        }
+      } else if (m.isShooter) {
         // ── Shooter: pixel art floating eye turret ──
         const sc = SHOOTER_COLORS[m.colorIdx];
         const p = s / 7;
