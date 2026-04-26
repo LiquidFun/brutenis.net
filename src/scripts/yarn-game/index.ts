@@ -220,8 +220,8 @@ function checkYarnBallVsMonsters() {
   }
 
   // Check upgrade pickup collision
-  if (upgrades) {
-    upgrades.checkCollision(balls);
+  if (upgrades && monsters) {
+    upgrades.checkCollision(balls, monsters.level);
   }
 }
 
@@ -328,8 +328,56 @@ function init() {
   initialized = true;
 }
 
+// ── Cheat panel (dev only) ──
+
+function initCheatPanel() {
+  if (location.hostname !== "10.0.0.2") return;
+  if (document.getElementById("cheat-panel")) return;
+
+  const panel = document.createElement("div");
+  panel.id = "cheat-panel";
+  Object.assign(panel.style, {
+    position: "fixed",
+    bottom: "12px",
+    left: "12px",
+    zIndex: "99999",
+    background: "rgba(0,0,0,0.75)",
+    color: "#fff",
+    padding: "8px 12px",
+    borderRadius: "8px",
+    fontFamily: "monospace",
+    fontSize: "13px",
+    display: "flex",
+    gap: "8px",
+    alignItems: "center",
+  });
+
+  const btn = document.createElement("button");
+  btn.textContent = "Next Level";
+  Object.assign(btn.style, {
+    background: "#ff6b6b",
+    color: "#fff",
+    border: "none",
+    borderRadius: "4px",
+    padding: "4px 10px",
+    cursor: "pointer",
+    fontFamily: "inherit",
+    fontSize: "13px",
+  });
+  btn.addEventListener("click", () => {
+    if (monsters) {
+      monsters.skipToNextLevel();
+      showToast(`Skipped to level ${monsters.level}!`);
+    }
+  });
+
+  panel.appendChild(btn);
+  document.body.appendChild(panel);
+}
+
 document.addEventListener("astro:page-load", () => {
   initOverlayButtons();
+  initCheatPanel();
   if (!initialized) {
     init();
   } else if (monsters) {
@@ -346,3 +394,4 @@ document.addEventListener("astro:page-load", () => {
 
 init();
 initOverlayButtons();
+initCheatPanel();

@@ -43,9 +43,6 @@ const PICKUP_RADIUS = 18;
 const MAGNET_RADIUS = 200;
 const MAGNET_FORCE = 8000;
 const CARD_REPAIR_RATE = 0.3; // HP per second
-const MAX_EXTRA_BALLS = 3;
-const MAX_LARGER_STACKS = 3;
-const MAX_DAMAGE_MULT = 3;
 
 const UPGRADE_VISUALS: Record<UpgradeType, { color: string; label: string }> = {
   "extra-ball": { color: "#74b9ff", label: "Extra Ball!" },
@@ -96,6 +93,8 @@ export class UpgradeManager {
   private firstSpawned = false;
   private shieldFlashTimer = 0;
   private dmAccess: DamageMapAccess | null = null;
+  private activeUpgrade: UpgradeType | null = null;
+  private activeUpgradeLevel = 0;
 
   setDamageMapAccess(access: DamageMapAccess) {
     this.dmAccess = access;
@@ -104,6 +103,11 @@ export class UpgradeManager {
   // ── Spawn logic ──
 
   checkLevelUp(level: number) {
+    // Expire active upgrade when level changes
+    if (this.activeUpgrade && level > this.activeUpgradeLevel) {
+      this.deactivateUpgrade();
+    }
+
     if (level < FIRST_UPGRADE_LEVEL) return;
     if ((level - FIRST_UPGRADE_LEVEL) % UPGRADE_LEVEL_INTERVAL !== 0) return;
     if (this.spawnedAtLevels.has(level)) return;
@@ -112,15 +116,7 @@ export class UpgradeManager {
   }
 
   private getEligibleTypes(): UpgradeType[] {
-    const types: UpgradeType[] = [];
-    if (this.state.extraBallCount < MAX_EXTRA_BALLS) types.push("extra-ball");
-    if (!this.state.shieldActive) types.push("regen-shield");
-    if (this.state.ballRadiusBonus < BALL_RADIUS_INCREASE * MAX_LARGER_STACKS)
-      types.push("larger-balls");
-    if (!this.state.magnetActive) types.push("magnet");
-    if (this.state.damageMultiplier < MAX_DAMAGE_MULT) types.push("double-damage");
-    if (!this.state.cardRepairActive) types.push("card-repair");
-    return types;
+    return ["extra-ball", "regen-shield", "larger-balls", "magnet", "double-damage", "card-repair"];
   }
 
   private spawnPickup() {
@@ -170,7 +166,7 @@ export class UpgradeManager {
 
   // ── Collision ──
 
-  checkCollision(balls: Array<{ x: number; y: number; radius: number }>) {
+  checkCollision(balls: Array<{ x: number; y: number; radius: number }>, level: number) {
     for (const pickup of this.pickups) {
       if (pickup.collected) continue;
       for (const ball of balls) {
@@ -180,21 +176,29 @@ export class UpgradeManager {
         if (dist < pickup.radius + ball.radius) {
           pickup.collected = true;
           pickup.collectAnim = 1;
-          this.applyUpgrade(pickup.type);
+          this.applyUpgrade(pickup.type, level);
           break;
         }
       }
     }
   }
 
-  private applyUpgrade(type: UpgradeType) {
+  private applyUpgrade(type: UpgradeType, level: number) {
+    // Deactivate previous upgrade before applying new one
+    if (this.activeUpgrade) {
+      this.deactivateUpgrade();
+    }
+
+    this.activeUpgrade = type;
+    this.activeUpgradeLevel = level;
+
     const visual = UPGRADE_VISUALS[type];
     const toast = (window as any).__gameShowToast;
     if (toast) toast(visual.label);
 
     switch (type) {
       case "extra-ball":
-        this.state.extraBallCount++;
+        this.state.extraBallCount = 1;
         const addBall = (window as any).__yarnCursorAddBall;
         if (addBall) addBall();
         break;
@@ -203,7 +207,7 @@ export class UpgradeManager {
         this.state.shieldHP = MAX_SHIELD_HP;
         break;
       case "larger-balls":
-        this.state.ballRadiusBonus += BALL_RADIUS_INCREASE;
+        this.state.ballRadiusBonus = BALL_RADIUS_INCREASE;
         const setBonus = (window as any).__yarnCursorSetRadiusBonus;
         if (setBonus) setBonus(this.state.ballRadiusBonus);
         break;
@@ -211,15 +215,44 @@ export class UpgradeManager {
         this.state.magnetActive = true;
         break;
       case "double-damage":
-        this.state.damageMultiplier = Math.min(
-          MAX_DAMAGE_MULT,
-          this.state.damageMultiplier + 1,
-        );
+        this.state.damageMultiplier = 2;
         break;
       case "card-repair":
         this.state.cardRepairActive = true;
         break;
     }
+  }
+
+  private deactivateUpgrade() {
+    if (!this.activeUpgrade) return;
+
+    switch (this.activeUpgrade) {
+      case "extra-ball":
+        this.state.extraBallCount = 0;
+        const removeBall = (window as any).__yarnCursorRemoveBall;
+        if (removeBall) removeBall();
+        break;
+      case "regen-shield":
+        this.state.shieldActive = false;
+        this.state.shieldHP = 0;
+        break;
+      case "larger-balls":
+        this.state.ballRadiusBonus = 0;
+        const setBonus = (window as any).__yarnCursorSetRadiusBonus;
+        if (setBonus) setBonus(0);
+        break;
+      case "magnet":
+        this.state.magnetActive = false;
+        break;
+      case "double-damage":
+        this.state.damageMultiplier = 1;
+        break;
+      case "card-repair":
+        this.state.cardRepairActive = false;
+        break;
+    }
+
+    this.activeUpgrade = null;
   }
 
   // ── Shield ──
@@ -569,6 +602,7 @@ export class UpgradeManager {
   }
 
   cleanup() {
+    this.deactivateUpgrade();
     this.pickups = [];
   }
 }

@@ -436,6 +436,13 @@ export class MonsterManager {
     }
   }
 
+  skipToNextLevel() {
+    const nextIdx = this.levelThresholds.findIndex(t => this.score < t);
+    if (nextIdx >= 0) {
+      this.score = this.levelThresholds[nextIdx];
+    }
+  }
+
   retarget() {
     this.restoreCardVisuals();
     this.gameOver = false;

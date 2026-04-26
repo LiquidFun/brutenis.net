@@ -103,6 +103,16 @@ function addBall() {
 }
 (window as any).__yarnCursorAddBall = addBall;
 
+// ── Remove last extra ball (called by upgrade system on deactivation) ──
+function removeBall() {
+  if (gyroActive) {
+    if (gyroBalls.length > 1) gyroBalls.pop();
+  } else {
+    if (ropes.length > 1) ropes.pop();
+  }
+}
+(window as any).__yarnCursorRemoveBall = removeBall;
+
 // ── Set radius bonus (called by upgrade system) ──
 function setRadiusBonus(bonus: number) {
   ballRadiusBonus = bonus;
