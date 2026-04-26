@@ -358,6 +358,8 @@ function startGyro() {
   gyroBalls = [primaryGyro];
 
   let lastOrientTime = performance.now();
+  let baseBeta: number | null = null;
+  let baseGamma: number | null = null;
   window.addEventListener("deviceorientation", (e: DeviceOrientationEvent) => {
     const now = performance.now();
     const dt = (now - lastOrientTime) / 1000;
@@ -365,6 +367,15 @@ function startGyro() {
 
     let beta = e.beta ?? 0;
     let gamma = e.gamma ?? 0;
+
+    // Use the first reading as the neutral "zero" position so the phone's
+    // orientation at load time becomes the resting point.
+    if (baseBeta === null) {
+      baseBeta = beta;
+      baseGamma = gamma;
+    }
+    beta -= baseBeta;
+    gamma -= baseGamma!;
 
     // Compensate for screen rotation: deviceorientation values are in the
     // device's physical frame, so rotate them into screen coordinates.
