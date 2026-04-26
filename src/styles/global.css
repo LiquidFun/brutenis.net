@@ -229,7 +229,39 @@
 }
 
 .card-destroyed {
-  filter: grayscale(0.85) brightness(0.7);
-  opacity: 0.5;
+  filter: grayscale(1) brightness(0.35) sepia(0.2) !important;
   pointer-events: auto;
 }
+.card-destroyed-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 2;
+  font-family: "Caveat", cursive;
+  font-size: 2rem;
+  font-weight: bold;
+  color: #c0392b;
+  text-shadow: 0 2px 6px rgba(0,0,0,0.3);
+  letter-spacing: 0.1em;
+  transform: rotate(-6deg);
+}
+.card-hp-indicator {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  pointer-events: none;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.7rem;
+  font-weight: bold;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(0,0,0,0.6);
+  backdrop-filter: blur(2px);
+}
+.card-hp-indicator.hp-high { color: #55efc4; }
+.card-hp-indicator.hp-mid { color: #fdcb6e; }
+.card-hp-indicator.hp-low { color: #ff7675; }

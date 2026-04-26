@@ -131,6 +131,44 @@ function applyCrackOverlay(el: Element, pct: number) {
   overlay.innerHTML = renderCracks(trees, rect.width, rect.height, strokeW, alpha);
 }
 
+// ── HP indicator + destroyed label helpers ──
+
+function updateHpIndicator(el: Element, dmg: number, level: number) {
+  const html = el as HTMLElement;
+  let indicator = html.querySelector(".card-hp-indicator") as HTMLElement | null;
+
+  if (level < 5 || dmg <= 0) {
+    if (indicator) indicator.remove();
+    return;
+  }
+
+  const hpPct = Math.max(0, Math.round((1 - dmg / MAX_CARD_HP) * 100));
+
+  if (!indicator) {
+    indicator = document.createElement("div");
+    indicator.className = "card-hp-indicator";
+    html.appendChild(indicator);
+  }
+
+  indicator.textContent = `${hpPct}%`;
+  indicator.classList.remove("hp-high", "hp-mid", "hp-low");
+  if (hpPct > 60) indicator.classList.add("hp-high");
+  else if (hpPct > 30) indicator.classList.add("hp-mid");
+  else indicator.classList.add("hp-low");
+}
+
+function addDestroyedLabel(el: Element) {
+  const html = el as HTMLElement;
+  if (html.querySelector(".card-destroyed-label")) return;
+  // Remove HP indicator when destroyed
+  const indicator = html.querySelector(".card-hp-indicator");
+  if (indicator) indicator.remove();
+  const label = document.createElement("div");
+  label.className = "card-destroyed-label";
+  label.textContent = "DESTROYED";
+  html.appendChild(label);
+}
+
 // ── Types ──
 
 interface Particle {
@@ -237,6 +275,7 @@ export class MonsterManager {
   refreshCardVisual(el: Element, dmg: number, maxHP: number) {
     const html = el as HTMLElement;
     const key = cardKey(el);
+    updateHpIndicator(el, dmg, this.level);
     if (dmg <= 0) {
       html.style.filter = "";
       html.classList.remove("card-cracked");
@@ -397,8 +436,11 @@ export class MonsterManager {
     const br = 1 - pct * 0.3;
     html.style.filter = `grayscale(${gs.toFixed(2)}) brightness(${br.toFixed(2)})`;
 
+    updateHpIndicator(el, next, this.level);
+
     if (next >= MAX_CARD_HP) {
       (el as HTMLElement).classList.add("card-destroyed");
+      addDestroyedLabel(el);
       getDestroyedSet().add(key);
       for (const mon of this.monsters) {
         if (mon.targetEl === el) {
@@ -418,9 +460,11 @@ export class MonsterManager {
       const html = el as HTMLElement;
       if (destroyed.has(key)) {
         html.classList.add("card-destroyed");
+        addDestroyedLabel(el);
         if (cardCracks.has(key)) applyCrackOverlay(el, 1);
       } else {
         const dmg = damageMap.get(key) || 0;
+        updateHpIndicator(el, dmg, this.level);
         if (dmg > 0) {
           const pct = dmg / MAX_CARD_HP;
           if (cardCracks.has(key)) applyCrackOverlay(el, pct);
