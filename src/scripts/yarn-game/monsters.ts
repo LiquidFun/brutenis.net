@@ -25,6 +25,23 @@ const SHIELDED_SCORE = 5;
 const SHIELDED_SHIELD_COLOR = "#7f8c8d";
 const SHIELDED_SHIELD_GLOW = "#ecf0f1";
 
+const BOSS_FIRST_LEVEL = 10;
+const BOSS_SCORE = 25;
+const BOSS_HP = 12;
+const BOSS_SIZE = 70;
+const BOSS_INVULN_TIME = 1.5;
+const BOSS_PHASE1_COOLDOWN = 2.0;
+const BOSS_PHASE2_BURST_COOLDOWN = 0.2;
+const BOSS_PHASE2_BURST_COUNT = 5;
+const BOSS_PHASE2_CYCLE_TIME = 4.0;
+const BOSS_PROJECTILE_SPEED = 200;
+const BOSS_SHIELD_COLOR = "#8e44ad";
+const BOSS_SHIELD_GLOW = "#d2b4de";
+const BOSS_COLORS = [
+  { body: "#4a0e4e", eye: "#e74c3c", wing: "#8e44ad", accent: "#d4ac0d" },
+  { body: "#1b2631", eye: "#f39c12", wing: "#5b2c6f", accent: "#c0392b" },
+];
+
 const MAX_CARD_HP = 5;
 const DAMAGE_PER_SECOND = 0.5;
 
@@ -218,6 +235,14 @@ interface Monster {
   isShielded: boolean;
   shieldSegments: number;
   shieldFlash: number[];
+  isBoss: boolean;
+  bossOpenSegment: number;
+  bossInvulnTimer: number;
+  bossAttackTimer: number;
+  bossPhase2Cycle: number; // tracks time within phase 2 cycle (burst vs spawn)
+  bossBurstsFired: number; // how many bursts fired in current machine gun volley
+  bossWanderTarget: { x: number; y: number } | null;
+  bossWanderTimer: number;
 }
 
 let monsterIdCounter = 0;
@@ -357,6 +382,21 @@ export class MonsterManager {
     }
   }
 
+  private findNearestCard(x: number, y: number): Element | null {
+    const cards = this.getAliveCards();
+    if (cards.length === 0) return null;
+    let best: Element | null = null;
+    let bestDist = Infinity;
+    for (const card of cards) {
+      const rect = getCachedRect(card);
+      const cx = rect.left + rect.width / 2;
+      const cy = rect.top + rect.height / 2;
+      const d = (cx - x) ** 2 + (cy - y) ** 2;
+      if (d < bestDist) { bestDist = d; best = card; }
+    }
+    return best;
+  }
+
   private findTarget(): { x: number; y: number; t: number; el: Element } | null {
     const cards = this.getAliveCards();
     if (cards.length === 0) return null;
@@ -392,6 +432,29 @@ export class MonsterManager {
       id: `m${monsterIdCounter++}`,
       isShooter: false, orbitAngle: 0, shootCooldown: 0,
       isShielded: true, shieldSegments: segments, shieldFlash: new Array(8).fill(0),
+      isBoss: false, bossOpenSegment: 0, bossInvulnTimer: 0,
+      bossAttackTimer: 0, bossPhase2Cycle: 0, bossBurstsFired: 0,
+      bossWanderTarget: null, bossWanderTimer: 0,
+    });
+  }
+
+  private spawnBoss(target: { x: number; y: number; t: number; el: Element }) {
+    const pos = this.spawnOffScreen();
+    const openSeg = Math.floor(Math.random() * 8);
+    this.monsters.push({
+      x: pos.x, y: pos.y, vx: 0, vy: 0,
+      targetT: target.t, targetX: target.x, targetY: target.y,
+      size: BOSS_SIZE, hitRadius: BOSS_SIZE * 2.0,
+      colorIdx: Math.floor(Math.random() * BOSS_COLORS.length),
+      wingPhase: Math.random() * Math.PI * 2,
+      alive: true, spawnAnim: 0, eatingTimer: 0, targetEl: target.el,
+      hp: BOSS_HP, isBig: true, isHuge: true, flashTimer: 0,
+      id: `m${monsterIdCounter++}`,
+      isShooter: false, orbitAngle: 0, shootCooldown: 0,
+      isShielded: false, shieldSegments: 0, shieldFlash: new Array(8).fill(0),
+      isBoss: true, bossOpenSegment: openSeg, bossInvulnTimer: 0,
+      bossAttackTimer: BOSS_PHASE1_COOLDOWN, bossPhase2Cycle: 0, bossBurstsFired: 0,
+      bossWanderTarget: null, bossWanderTimer: 0,
     });
   }
 
@@ -400,6 +463,13 @@ export class MonsterManager {
     if (this.gameOver) return;
     const target = this.findTarget();
     if (!target) return;
+
+    // Level 10: boss only (spawn one boss, no other enemies)
+    if (this.level === BOSS_FIRST_LEVEL) {
+      if (this.monsters.some(m => m.isBoss && m.alive)) return;
+      this.spawnBoss(target);
+      return;
+    }
 
     // Level 7: only shielded enemies
     if (this.level === SHIELDED_FIRST_LEVEL) {
@@ -431,6 +501,9 @@ export class MonsterManager {
         isShooter: true, orbitAngle: Math.random() * Math.PI * 2,
         shootCooldown: SHOOTER_COOLDOWN,
         isShielded: false, shieldSegments: 0, shieldFlash: [],
+        isBoss: false, bossOpenSegment: 0, bossInvulnTimer: 0,
+        bossAttackTimer: 0, bossPhase2Cycle: 0, bossBurstsFired: 0,
+        bossWanderTarget: null, bossWanderTimer: 0,
       });
       return;
     }
@@ -466,6 +539,9 @@ export class MonsterManager {
       id: `m${monsterIdCounter++}`,
       isShooter: false, orbitAngle: 0, shootCooldown: 0,
       isShielded: false, shieldSegments: 0, shieldFlash: [],
+      isBoss: false, bossOpenSegment: 0, bossInvulnTimer: 0,
+      bossAttackTimer: 0, bossPhase2Cycle: 0, bossBurstsFired: 0,
+      bossWanderTarget: null, bossWanderTimer: 0,
     });
   }
 
@@ -473,6 +549,8 @@ export class MonsterManager {
     let hits = 0;
     for (const m of this.monsters) {
       if (!m.alive || m.flashTimer > 0) continue;
+      // Boss invulnerability window
+      if (m.isBoss && m.bossInvulnTimer > 0) continue;
       const dx = m.x - ballX;
       const dy = m.y - ballY;
       const distSq = dx * dx + dy * dy;
@@ -481,6 +559,24 @@ export class MonsterManager {
         const dist = Math.sqrt(distSq);
         const nx = dist > 0 ? dx / dist : 0;
         const ny = dist > 0 ? dy / dist : -1;
+
+        // Boss shield check: 7/8 segments active, 1 open
+        if (m.isBoss) {
+          const hitAngle = Math.atan2(ballY - m.y, ballX - m.x);
+          let norm = ((hitAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+          const segIdx = Math.floor((norm + Math.PI / 8) / (Math.PI / 4)) % 8;
+          if (segIdx !== m.bossOpenSegment) {
+            // Hit shielded segment — bounce off
+            m.shieldFlash[segIdx] = 0.3;
+            m.vx = nx * 60;
+            m.vy = ny * 60;
+            const impulse = (window as any).__yarnCursorApplyImpulse;
+            if (impulse) impulse(ballX, ballY, -nx * 2000, -ny * 2000);
+            hits++;
+            continue;
+          }
+          // Hit the open segment — take damage, then become invulnerable and rotate opening
+        }
 
         // Shield check for shielded enemies
         if (m.isShielded && m.shieldSegments > 0) {
@@ -509,14 +605,20 @@ export class MonsterManager {
         const dmgMul = (window as any).__upgradeDamageMultiplier;
         m.hp -= dmgMul ? dmgMul() : 1;
 
-        const c = m.isShooter ? SHOOTER_COLORS[m.colorIdx] : MONSTER_COLORS[m.colorIdx];
+        const c = m.isBoss ? BOSS_COLORS[m.colorIdx]
+          : m.isShooter ? SHOOTER_COLORS[m.colorIdx] : MONSTER_COLORS[m.colorIdx];
 
         if (m.hp <= 0) {
           m.alive = false;
           if (m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
-          this.score += m.isShielded ? SHIELDED_SCORE : 1;
+          this.score += m.isBoss ? BOSS_SCORE : m.isShielded ? SHIELDED_SCORE : 1;
+          // Boss kill: immediately advance to next level
+          if (m.isBoss) {
+            const nextIdx = this.levelThresholds.findIndex(t => this.score < t);
+            if (nextIdx >= 0) this.score = this.levelThresholds[nextIdx];
+          }
           hits++;
-          const count = m.isHuge ? 40 : m.isBig ? 28 : 18;
+          const count = m.isBoss ? 60 : m.isHuge ? 40 : m.isBig ? 28 : 18;
           for (let i = 0; i < count; i++) {
             const spread = (Math.random() - 0.5) * Math.PI * 0.8;
             const angle = Math.atan2(ny, nx) + spread;
@@ -526,13 +628,21 @@ export class MonsterManager {
               x: m.x + (Math.random() - 0.5) * m.size * 0.5,
               y: m.y + (Math.random() - 0.5) * m.size * 0.5,
               vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-              life, maxLife: life, size: m.isHuge ? 4 + Math.random() * 8 : m.isBig ? 3 + Math.random() * 6 : 2 + Math.random() * 5,
-              color: [c.body, "ring" in c ? c.ring : c.wing, c.eye, "#ecf0f1"][Math.floor(Math.random() * 4)],
+              life, maxLife: life, size: m.isBoss ? 5 + Math.random() * 10 : m.isHuge ? 4 + Math.random() * 8 : m.isBig ? 3 + Math.random() * 6 : 2 + Math.random() * 5,
+              color: [c.body, "accent" in c ? c.accent : ("ring" in c ? c.ring : c.wing), c.eye, "#ecf0f1"][Math.floor(Math.random() * 4)],
             });
           }
         } else {
           m.flashTimer = 0.3;
-          const force = m.isShooter ? 150 + Math.random() * 100 : m.isHuge ? 100 + Math.random() * 80 : 300 + Math.random() * 200;
+          // Boss: become invulnerable and rotate opening
+          if (m.isBoss) {
+            m.bossInvulnTimer = BOSS_INVULN_TIME;
+            // Pick new random open segment (different from current)
+            let newOpen = Math.floor(Math.random() * 8);
+            while (newOpen === m.bossOpenSegment) newOpen = Math.floor(Math.random() * 8);
+            m.bossOpenSegment = newOpen;
+          }
+          const force = m.isBoss ? 50 + Math.random() * 30 : m.isShooter ? 150 + Math.random() * 100 : m.isHuge ? 100 + Math.random() * 80 : 300 + Math.random() * 200;
           m.vx = nx * force; m.vy = ny * force;
           m.eatingTimer = 0;
           if (m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
@@ -698,6 +808,11 @@ export class MonsterManager {
       this.maxMonsters = Math.min(this.maxMonsters, this.mobile ? 2 : 3);
       this.spawnInterval = Math.max(this.spawnInterval, 3);
     }
+    // Level 10: boss fight — only 1 spawned (boss spawns its own adds)
+    if (this.level === BOSS_FIRST_LEVEL) {
+      this.maxMonsters = 1;
+      this.spawnInterval = 1;
+    }
 
     if (this.spawnTimer > this.spawnInterval) {
       this.spawnTimer = 0;
@@ -719,9 +834,21 @@ export class MonsterManager {
     for (const m of this.monsters) {
       if (!m.alive) continue;
       m.spawnAnim = Math.min(1, m.spawnAnim + dt * 3);
-      m.wingPhase += dt * (m.isShooter ? 3 : m.isBig ? 10 : 14);
+      m.wingPhase += dt * (m.isBoss ? 5 : m.isShooter ? 3 : m.isBig ? 10 : 14);
       if (m.flashTimer > 0) m.flashTimer -= dt;
-      if (m.isShielded) for (let i = 0; i < 8; i++) if (m.shieldFlash[i] > 0) m.shieldFlash[i] -= dt;
+      if (m.isShielded || m.isBoss) for (let i = 0; i < 8; i++) if (m.shieldFlash[i] > 0) m.shieldFlash[i] -= dt;
+
+      if (m.isBoss) {
+        const prevInvuln = m.bossInvulnTimer;
+        m.bossInvulnTimer = Math.max(0, m.bossInvulnTimer - dt);
+        // Dash at 0.5s into invulnerability (timer crosses from above 1.0 to at/below 1.0)
+        if (prevInvuln > BOSS_INVULN_TIME - 0.5 && m.bossInvulnTimer <= BOSS_INVULN_TIME - 0.5) {
+          const dashAngle = Math.random() * Math.PI * 2;
+          const dashSpeed = 600;
+          m.vx = Math.cos(dashAngle) * dashSpeed;
+          m.vy = Math.sin(dashAngle) * dashSpeed;
+        }
+      }
 
       if (m.flashTimer > 0) {
         m.x += m.vx * dt; m.y += m.vy * dt;
@@ -733,6 +860,135 @@ export class MonsterManager {
         const t = this.findTarget();
         if (t) { m.targetEl = t.el; m.targetT = t.t; m.eatingTimer = 0; }
         else continue;
+      }
+
+      if (m.isBoss) {
+        // ── Boss: wander between random positions near blog entries ──
+        m.bossWanderTimer -= dt;
+        if (!m.bossWanderTarget || m.bossWanderTimer <= 0) {
+          // Pick a random card and wander near it
+          const cards = this.getAliveCards();
+          if (cards.length > 0) {
+            const card = cards[Math.floor(Math.random() * cards.length)];
+            const rect = getCachedRect(card);
+            const margin = 180;
+            m.bossWanderTarget = {
+              x: rect.left + rect.width / 2 + (Math.random() - 0.5) * margin * 2,
+              y: rect.top + rect.height / 2 + (Math.random() - 0.5) * margin,
+            };
+            m.bossWanderTimer = 2 + Math.random() * 3;
+          }
+        }
+
+        if (m.bossWanderTarget) {
+          const dx = m.bossWanderTarget.x - m.x;
+          const dy = m.bossWanderTarget.y - m.y;
+          const distSq = dx * dx + dy * dy;
+          const bossSpeed = 80;
+          if (distSq > 100) {
+            const dist = Math.sqrt(distSq);
+            m.vx += (dx / dist) * bossSpeed * dt * 3;
+            m.vy += (dy / dist) * bossSpeed * dt * 3;
+            const spd = Math.sqrt(m.vx * m.vx + m.vy * m.vy);
+            if (spd > bossSpeed) { m.vx = (m.vx / spd) * bossSpeed; m.vy = (m.vy / spd) * bossSpeed; }
+          }
+        }
+        m.x += m.vx * dt; m.y += m.vy * dt;
+        m.vx *= 0.95; m.vy *= 0.95;
+
+        // ── Boss attack logic ──
+        const bossPhase2 = m.hp <= BOSS_HP / 2;
+        m.bossAttackTimer -= dt;
+
+        if (!bossPhase2) {
+          // Phase 1: shoot 3 projectiles in a spread toward nearest card
+          if (m.bossAttackTimer <= 0) {
+            const nearestCard = this.findNearestCard(m.x, m.y);
+            if (nearestCard) {
+              const bc = BOSS_COLORS[m.colorIdx];
+              const rect = getCachedRect(nearestCard);
+              const tcx = rect.left + rect.width / 2;
+              const tcy = rect.top + rect.height / 2;
+              const baseAngle = Math.atan2(tcy - m.y, tcx - m.x);
+              const spread = 0.3;
+              for (let i = -1; i <= 1; i++) {
+                const a = baseAngle + i * spread;
+                this.projectiles.push({
+                  x: m.x + Math.cos(a) * BOSS_SIZE * 0.8,
+                  y: m.y + Math.sin(a) * BOSS_SIZE * 0.8,
+                  targetEl: nearestCard,
+                  shooterId: m.id,
+                  life: 5,
+                  color: bc.accent,
+                });
+              }
+              m.bossAttackTimer = BOSS_PHASE1_COOLDOWN;
+            }
+          }
+        } else {
+          // Phase 2: alternate between machine gun burst and spawning a shooter
+          m.bossPhase2Cycle += dt;
+          const halfCycle = BOSS_PHASE2_CYCLE_TIME / 2;
+
+          if (m.bossPhase2Cycle < halfCycle) {
+            // Machine gun: 5 bursts with small spread toward nearest card
+            if (m.bossAttackTimer <= 0 && m.bossBurstsFired < BOSS_PHASE2_BURST_COUNT) {
+              const nearestCard = this.findNearestCard(m.x, m.y);
+              if (nearestCard) {
+                const bc = BOSS_COLORS[m.colorIdx];
+                const rect = getCachedRect(nearestCard);
+                const tcx = rect.left + rect.width / 2;
+                const tcy = rect.top + rect.height / 2;
+                const baseAngle = Math.atan2(tcy - m.y, tcx - m.x);
+                const a = baseAngle + (Math.random() - 0.5) * 0.25;
+                this.projectiles.push({
+                  x: m.x + Math.cos(a) * BOSS_SIZE * 0.8,
+                  y: m.y + Math.sin(a) * BOSS_SIZE * 0.8,
+                  targetEl: nearestCard,
+                  shooterId: m.id,
+                  life: 5,
+                  color: bc.accent,
+                });
+                m.bossBurstsFired++;
+                m.bossAttackTimer = BOSS_PHASE2_BURST_COOLDOWN;
+              }
+            }
+          } else if (m.bossPhase2Cycle < halfCycle + 0.5) {
+            // Spawn 2 shooters (once per cycle, at transition point)
+            if (m.bossBurstsFired !== -1) {
+              for (let si = 0; si < 3; si++) {
+                const target = this.findTarget();
+                if (target) {
+                  const pos = { x: m.x + (Math.random() - 0.5) * 80, y: m.y + (Math.random() - 0.5) * 80 };
+                  this.monsters.push({
+                    x: pos.x, y: pos.y, vx: 0, vy: 0,
+                    targetT: target.t, targetX: target.x, targetY: target.y,
+                    size: 34, hitRadius: 68,
+                    colorIdx: Math.floor(Math.random() * SHOOTER_COLORS.length),
+                    wingPhase: Math.random() * Math.PI * 2,
+                    alive: true, spawnAnim: 0, eatingTimer: 0, targetEl: target.el,
+                    hp: 2, isBig: false, isHuge: false, flashTimer: 0,
+                    id: `m${monsterIdCounter++}`,
+                    isShooter: true, orbitAngle: Math.random() * Math.PI * 2,
+                    shootCooldown: SHOOTER_COOLDOWN,
+                    isShielded: false, shieldSegments: 0, shieldFlash: [],
+                    isBoss: false, bossOpenSegment: 0, bossInvulnTimer: 0,
+                    bossAttackTimer: 0, bossPhase2Cycle: 0, bossBurstsFired: 0,
+                    bossWanderTarget: null, bossWanderTimer: 0,
+                  });
+                }
+              }
+              m.bossBurstsFired = -1; // mark spawned for this cycle
+            }
+          }
+
+          if (m.bossPhase2Cycle >= BOSS_PHASE2_CYCLE_TIME) {
+            m.bossPhase2Cycle = 0;
+            m.bossBurstsFired = 0;
+            m.bossAttackTimer = BOSS_PHASE2_BURST_COOLDOWN;
+          }
+        }
+        continue;
       }
 
       if (m.isShooter) {
@@ -985,7 +1241,8 @@ export class MonsterManager {
 
       ctx.font = "bold 28px Caveat, cursive";
       ctx.fillStyle = "#2d3436";
-      const msgs = this.level >= 10 ? "Colossal beasts incoming!"
+      const msgs = this.level === 10 ? "BOSS! Find the opening in its shield!"
+        : this.level >= 10 ? "Colossal beasts incoming!"
         : this.level >= 7 ? "Shielded foes! Hit them from behind!"
         : this.level >= 6 ? "Bigger creatures approaching..."
         : this.level >= 5 ? "Ranged enemies spotted!"
@@ -1028,8 +1285,128 @@ export class MonsterManager {
 
       ctx.save(); ctx.translate(m.x, m.y);
       if (m.flashTimer > 0 && Math.sin(m.flashTimer * 40) > 0) ctx.globalAlpha = 0.5;
+      // Boss invulnerability pulsing
+      if (m.isBoss && m.bossInvulnTimer > 0) {
+        ctx.globalAlpha = 0.4 + Math.sin(m.bossInvulnTimer * 20) * 0.3;
+      }
 
-      if (m.isShielded) {
+      if (m.isBoss) {
+        // ── Boss: large pixel art demon moth ──
+        const bc = BOSS_COLORS[m.colorIdx];
+        const p = s / 10; // finer pixel grid for bigger creature
+        const wingUp = Math.sin(m.wingPhase) * 0.5;
+        const bob = Math.sin(m.wingPhase * 0.7) * p * 0.8;
+        const bossPhase2 = m.hp <= BOSS_HP / 2;
+
+        // Massive wings — 4 wing segments, layered
+        ctx.fillStyle = bc.wing;
+        // Outer wings
+        px(-8 * p, (-2 + wingUp) * p + bob, 4 * p, 6 * p);
+        px(-7 * p, (-5 + wingUp) * p + bob, 3 * p, 3 * p);
+        px(-6 * p, (-7 + wingUp) * p + bob, 2 * p, 2 * p);
+        px(4 * p, (-2 + wingUp) * p + bob, 4 * p, 6 * p);
+        px(4 * p, (-5 + wingUp) * p + bob, 3 * p, 3 * p);
+        px(4 * p, (-7 + wingUp) * p + bob, 2 * p, 2 * p);
+        // Inner wing detail
+        ctx.fillStyle = bossPhase2 ? "#c0392b" : bc.body;
+        px(-7 * p, (-1 + wingUp) * p + bob, 2 * p, 4 * p);
+        px(5 * p, (-1 + wingUp) * p + bob, 2 * p, 4 * p);
+
+        // Large body
+        ctx.fillStyle = bc.body;
+        px(-4 * p, -5 * p + bob, 8 * p, 10 * p);
+        px(-3 * p, -6 * p + bob, 6 * p, 1 * p);
+        px(-3 * p, 5 * p + bob, 6 * p, 1.5 * p);
+        // Shoulder pads
+        px(-5 * p, -4 * p + bob, 1.5 * p, 3 * p);
+        px(3.5 * p, -4 * p + bob, 1.5 * p, 3 * p);
+
+        // Armor plating — heavy
+        ctx.fillStyle = "#2c3e50";
+        px(-3 * p, -4 * p + bob, 6 * p, 2 * p);
+        px(-3.5 * p, -2 * p + bob, 1.5 * p, 5 * p);
+        px(2 * p, -2 * p + bob, 1.5 * p, 5 * p);
+        // Crown / horns
+        ctx.fillStyle = bc.accent;
+        px(-2 * p, -7 * p + bob, 1.5 * p, 2 * p);
+        px(0.5 * p, -7 * p + bob, 1.5 * p, 2 * p);
+        px(-3 * p, -6.5 * p + bob, 1 * p, 1.5 * p);
+        px(2 * p, -6.5 * p + bob, 1 * p, 1.5 * p);
+
+        // Eyes — larger, menacing
+        ctx.fillStyle = "#1a1a2e";
+        px(-2.5 * p, -3 * p + bob, 2 * p, 2 * p);
+        px(0.5 * p, -3 * p + bob, 2 * p, 2 * p);
+        ctx.fillStyle = bc.eye;
+        px(-2 * p, -2.5 * p + bob, 1.2 * p, 1.2 * p);
+        px(1 * p, -2.5 * p + bob, 1.2 * p, 1.2 * p);
+        // Eye glow in phase 2
+        if (bossPhase2) {
+          ctx.fillStyle = "#e74c3c";
+          ctx.globalAlpha = 0.5 + Math.sin(time * 8) * 0.3;
+          px(-2.5 * p, -3.5 * p + bob, 2.5 * p, 2.5 * p);
+          px(0.3 * p, -3.5 * p + bob, 2.5 * p, 2.5 * p);
+          ctx.globalAlpha = m.bossInvulnTimer > 0 ? 0.4 + Math.sin(m.bossInvulnTimer * 20) * 0.3 : (m.flashTimer > 0 ? 0.5 : 1);
+        }
+
+        // Mouth — wide gash
+        ctx.fillStyle = "#1a1a2e";
+        px(-2 * p, 1 * p + bob, 4 * p, 2 * p);
+        ctx.fillStyle = bc.accent;
+        // Fangs
+        px(-1.5 * p, 0.5 * p + bob, 0.8 * p, 1 * p);
+        px(0.8 * p, 0.5 * p + bob, 0.8 * p, 1 * p);
+        px(-0.5 * p, 2.5 * p + bob, 0.8 * p, 0.8 * p);
+
+        // Tail / lower body detail
+        ctx.fillStyle = bc.wing;
+        px(-1.5 * p, 6 * p + bob, 3 * p, 1.5 * p);
+        px(-1 * p, 7 * p + bob, 2 * p, 1 * p);
+
+        // Trail particles — bigger, more
+        ctx.fillStyle = bc.wing; ctx.globalAlpha = 0.3;
+        for (let i = 0; i < 6; i++) {
+          const tx = Math.sin(time * 2.5 + i * 1.2 + m.wingPhase) * s * 1.1;
+          const ty = Math.cos(time * 1.8 + i * 2.0 + m.wingPhase) * s * 0.5 + s * 1.1;
+          ctx.fillRect(tx - p * 0.8, ty - p * 0.8, p * 1.6, p * 1.6);
+        }
+        ctx.globalAlpha = m.bossInvulnTimer > 0 ? 0.4 + Math.sin(m.bossInvulnTimer * 20) * 0.3 : (m.flashTimer > 0 ? 0.5 : 1);
+
+        // ── Boss shield: 7/8 segments, 1 open ──
+        const shieldR = s * 1.6;
+        for (let i = 0; i < 8; i++) {
+          if (i === m.bossOpenSegment) continue; // the opening
+          const segAngle = i * (Math.PI / 4);
+          const flash = m.shieldFlash[i] > 0;
+          ctx.fillStyle = flash ? BOSS_SHIELD_GLOW : BOSS_SHIELD_COLOR;
+          ctx.globalAlpha = flash ? 0.95 : (m.bossInvulnTimer > 0 ? 0.9 : 0.65);
+          // 4 pixel blocks per segment for larger shield
+          for (let j = -1.5; j <= 1.5; j++) {
+            const a = segAngle + j * (Math.PI / 20);
+            const bx = Math.cos(a) * shieldR;
+            const by = Math.sin(a) * shieldR;
+            px(bx - p * 0.8, by - p * 0.8, p * 1.6, p * 1.6);
+          }
+        }
+        ctx.globalAlpha = 1;
+
+        // HP bar below boss
+        const hpBarW = s * 2;
+        const hpBarH = p * 1.2;
+        const hpBarY = s * 1.2;
+        ctx.fillStyle = "#2c3e50";
+        px(-hpBarW / 2, hpBarY, hpBarW, hpBarH);
+        const hpFrac = Math.max(0, m.hp / BOSS_HP);
+        ctx.fillStyle = hpFrac > 0.5 ? "#8e44ad" : hpFrac > 0.25 ? "#e67e22" : "#e74c3c";
+        px(-hpBarW / 2, hpBarY, hpBarW * hpFrac, hpBarH);
+        // HP bar border
+        ctx.fillStyle = "#ecf0f1";
+        px(-hpBarW / 2 - 1, hpBarY - 1, 1, hpBarH + 2);
+        px(hpBarW / 2, hpBarY - 1, 1, hpBarH + 2);
+        px(-hpBarW / 2, hpBarY - 1, hpBarW, 1);
+        px(-hpBarW / 2, hpBarY + hpBarH, hpBarW, 1);
+
+      } else if (m.isShielded) {
         // ── Shielded: bulky pixel art moth with shield plates ──
         const sc = MONSTER_COLORS[m.colorIdx];
         const p = s / 7;
