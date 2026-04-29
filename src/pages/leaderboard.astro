@@ -1,0 +1,153 @@
+---
+import BaseLayout from "@layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="Leaderboard" description="Game leaderboard - top scores defending blog posts">
+  <h1 class="text-5xl font-heading font-bold text-yarn-yellow mb-8">Leaderboard</h1>
+  <p class="font-body text-text-muted mb-6">
+    Top scores from defending blog posts against monsters. Play the game on any
+    <a href="/blog" class="text-yarn-coral hover:underline">listing page</a> and submit your score!
+  </p>
+
+  <div id="leaderboard-container">
+    <p id="leaderboard-loading" class="font-heading text-xl text-text-muted">Loading scores...</p>
+
+    <div id="leaderboard-table-wrap" class="leaderboard-table-wrap" style="display:none">
+      <table class="leaderboard-table">
+        <thead>
+          <tr>
+            <th class="lb-rank">#</th>
+            <th class="lb-name">Name</th>
+            <th class="lb-score">Score</th>
+            <th class="lb-level">Level</th>
+            <th class="lb-duration">Duration</th>
+            <th class="lb-date">Date</th>
+          </tr>
+        </thead>
+        <tbody id="leaderboard-body">
+        </tbody>
+      </table>
+    </div>
+  </div>
+</BaseLayout>
+
+<script>
+  import { fetchLeaderboard } from "@scripts/yarn-game/leaderboard-api";
+
+  function escapeHtml(str: string): string {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function formatDuration(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  }
+
+  async function loadLeaderboard() {
+    const tbody = document.getElementById("leaderboard-body");
+    const tableWrap = document.getElementById("leaderboard-table-wrap");
+    const loading = document.getElementById("leaderboard-loading");
+    if (!tbody) return;
+
+    try {
+      const data = await fetchLeaderboard(50);
+      if (data.entries.length === 0) {
+        if (loading) loading.textContent = "No scores yet. Be the first!";
+        return;
+      }
+
+      const highlightRank = sessionStorage.getItem("lastSubmittedRank");
+      const medals = ["", "\u{1F947}", "\u{1F948}", "\u{1F949}"];
+
+      for (const entry of data.entries) {
+        const tr = document.createElement("tr");
+        if (highlightRank && entry.rank === Number(highlightRank)) {
+          tr.classList.add("lb-highlight");
+        }
+
+        const medal = entry.rank <= 3 ? medals[entry.rank] + " " : "";
+        const dateStr = entry.date
+          ? new Date(entry.date).toLocaleDateString("en-US", {
+              month: "short", day: "numeric", year: "numeric",
+            })
+          : "";
+
+        tr.innerHTML = `
+          <td class="lb-rank font-mono">${medal}${entry.rank}</td>
+          <td class="lb-name font-heading">${escapeHtml(entry.name)}</td>
+          <td class="lb-score font-mono">${entry.score.toLocaleString()}</td>
+          <td class="lb-level font-mono">${entry.level}</td>
+          <td class="lb-duration font-mono">${formatDuration(entry.duration_s)}</td>
+          <td class="lb-date text-text-muted">${dateStr}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+
+      if (loading) loading.style.display = "none";
+      if (tableWrap) tableWrap.style.display = "";
+    } catch {
+      if (loading) loading.textContent = "Failed to load leaderboard.";
+    }
+  }
+
+  document.addEventListener("astro:page-load", loadLeaderboard);
+</script>
+
+<style>
+  .leaderboard-table-wrap {
+    overflow-x: auto;
+  }
+
+  .leaderboard-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-body);
+  }
+
+  .leaderboard-table th {
+    font-family: var(--font-heading);
+    font-size: 1.1rem;
+    text-align: left;
+    padding: 0.75rem 1rem;
+    border-bottom: 2px dashed var(--color-yarn-coral);
+    color: var(--color-text-charcoal);
+  }
+
+  .leaderboard-table td {
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+  }
+
+  .leaderboard-table tbody tr:nth-child(even) {
+    background: var(--color-bg-warm);
+  }
+
+  .leaderboard-table tbody tr:hover {
+    background: rgba(255, 107, 107, 0.08);
+  }
+
+  .lb-highlight {
+    background: rgba(78, 205, 196, 0.12) !important;
+    border-left: 3px solid var(--color-yarn-teal);
+  }
+
+  .lb-rank { text-align: center; width: 4rem; }
+  .lb-score { text-align: right; }
+  .lb-level { text-align: center; }
+  .lb-duration { text-align: center; }
+  .lb-date { text-align: right; }
+
+  @media (max-width: 639px) {
+    .lb-date {
+      display: none;
+    }
+    .leaderboard-table th,
+    .leaderboard-table td {
+      padding: 0.5rem 0.5rem;
+      font-size: 0.9rem;
+    }
+  }
+</style>

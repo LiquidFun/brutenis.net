@@ -48,6 +48,11 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
         <h2 class="font-heading text-6xl font-bold text-yarn-coral mb-2">Game Over!</h2>
         <p class="font-heading text-2xl text-text-charcoal mb-1">Defended <span id="game-over-score">0</span> attacks</p>
         <p class="font-heading text-xl text-text-muted">Reached Level <span id="game-over-level">1</span></p>
+        <div id="score-submit-section" class="score-submit-section">
+          <input id="score-name-input" type="text" placeholder="Your name" maxlength="20" class="score-name-input" />
+          <button id="submit-score-btn" class="submit-score-btn">Submit to Leaderboard</button>
+          <p id="submit-rank" class="submit-rank" style="display:none"></p>
+        </div>
         <button id="try-again-btn" class="try-again-btn">Try Again</button>
         <button id="disable-attackers-btn" class="disable-attackers-btn">Disable Attackers</button>
       </div>
@@ -74,6 +79,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
           <a href="/projects" class="nav-link">Projects</a>
           <a href="/games" class="nav-link">Games</a>
           <a href="/ctf" class="nav-link">CTF</a>
+          <a href="/leaderboard" class="nav-link">Leaderboard</a>
           <a href="/about" class="nav-link">About</a>
         </div>
       </div>
@@ -310,6 +316,64 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     background: var(--color-text-muted);
     color: white;
     transform: translateY(-2px);
+  }
+
+  .score-submit-section {
+    margin-top: 1rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .score-name-input {
+    font-family: var(--font-body);
+    font-size: 1.1rem;
+    padding: 0.5rem 1rem;
+    border: 2px dashed var(--color-yarn-teal);
+    border-radius: 0.75rem;
+    background: white;
+    color: var(--color-text-charcoal);
+    width: 100%;
+    max-width: 240px;
+    text-align: center;
+    outline: none;
+    box-sizing: border-box;
+  }
+
+  .score-name-input:focus {
+    border-style: solid;
+    border-color: var(--color-yarn-teal);
+  }
+
+  .submit-score-btn {
+    margin-top: 0.5rem;
+    padding: 0.6rem 2rem;
+    border: 2px solid var(--color-yarn-teal);
+    border-radius: 0.75rem;
+    font-family: var(--font-heading);
+    font-size: 1.4rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--color-yarn-teal);
+    color: white;
+  }
+
+  .submit-score-btn:hover {
+    opacity: 0.85;
+    transform: translateY(-2px);
+  }
+
+  .submit-score-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .submit-rank {
+    font-family: var(--font-heading);
+    font-size: 1.3rem;
+    color: var(--color-yarn-yellow);
+    margin-top: 0.25rem;
   }
 
   .gyro-permission-box {

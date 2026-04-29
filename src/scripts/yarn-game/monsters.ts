@@ -611,7 +611,13 @@ export class MonsterManager {
         if (m.hp <= 0) {
           m.alive = false;
           if (m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
-          this.score += m.isBoss ? BOSS_SCORE : m.isShielded ? SHIELDED_SCORE : 1;
+          const scoreDelta = m.isBoss ? BOSS_SCORE : m.isShielded ? SHIELDED_SCORE : 1;
+          this.score += scoreDelta;
+          const et = (window as any).__gameEventTracker;
+          if (et) et.record({
+            event_type: m.isBoss ? "kill_boss" : m.isShielded ? "kill_shielded" : m.isShooter ? "kill_shooter" : "kill_moth",
+            payload: { score_delta: scoreDelta, running_score: this.score, running_level: this.level },
+          });
           // Boss kill: immediately advance to next level
           if (m.isBoss) {
             const nextIdx = this.levelThresholds.findIndex(t => this.score < t);
@@ -702,6 +708,8 @@ export class MonsterManager {
       (el as HTMLElement).classList.add("card-destroyed");
       addDestroyedLabel(el);
       getDestroyedSet().add(key);
+      const et = (window as any).__gameEventTracker;
+      if (et) et.record({ event_type: "card_destroyed", payload: { card_id: key } });
       for (const mon of this.monsters) {
         if (mon.targetEl === el) {
           const t = this.findTarget();
@@ -789,6 +797,8 @@ export class MonsterManager {
       this.prevLevel = this.level;
       this.level = newLevel;
       this.levelUpTimer = 2.5;
+      const et = (window as any).__gameEventTracker;
+      if (et) et.record({ event_type: "level_up", payload: { new_level: newLevel } });
     }
 
     if (this.engaged) {

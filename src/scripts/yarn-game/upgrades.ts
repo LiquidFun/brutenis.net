@@ -188,6 +188,9 @@ export class UpgradeManager {
     this.activeUpgrade = type;
     this.activeUpgradeLevel = level;
 
+    const et = (window as any).__gameEventTracker;
+    if (et) et.record({ event_type: "upgrade_pickup", payload: { upgrade_type: type } });
+
     const visual = UPGRADE_VISUALS[type];
     const toast = (window as any).__gameShowToast;
     if (toast) toast(visual.label);
