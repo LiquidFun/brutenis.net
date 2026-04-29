@@ -372,7 +372,7 @@ function initScoreSubmitUI() {
         session, name, monsters.score, monsters.level, durationMs,
       );
       if (result.rank && rankEl) {
-        rankEl.textContent = `You placed #${result.rank}!`;
+        rankEl.innerHTML = `You placed #${result.rank}! <a href="/leaderboard" class="submit-rank-link">View Leaderboard</a>`;
         rankEl.style.display = "";
         sessionStorage.setItem("lastSubmittedRank", String(result.rank));
       }

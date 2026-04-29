@@ -372,8 +372,22 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
   .submit-rank {
     font-family: var(--font-heading);
     font-size: 1.3rem;
-    color: var(--color-yarn-yellow);
+    color: var(--color-yarn-coral);
     margin-top: 0.25rem;
+    font-weight: 700;
+  }
+
+  .submit-rank-link {
+    display: inline-block;
+    margin-top: 0.25rem;
+    font-size: 1.1rem;
+    color: var(--color-yarn-teal);
+    text-decoration: underline;
+    font-weight: 400;
+  }
+
+  .submit-rank-link:hover {
+    color: var(--color-text-charcoal);
   }
 
   .gyro-permission-box {

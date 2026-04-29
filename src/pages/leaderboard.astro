@@ -21,6 +21,7 @@ import BaseLayout from "@layouts/BaseLayout.astro";
             <th class="lb-score">Score</th>
             <th class="lb-level">Level</th>
             <th class="lb-duration">Duration</th>
+            <th class="lb-info">Info</th>
             <th class="lb-date">Date</th>
           </tr>
         </thead>
@@ -75,12 +76,16 @@ import BaseLayout from "@layouts/BaseLayout.astro";
             })
           : "";
 
+        const platformIcon = entry.platform === "mobile" ? "\u{1F4F1}" : "\u{1F5A5}";
+        const versionShort = entry.version.length > 10 ? entry.version.slice(0, 10) : entry.version;
+
         tr.innerHTML = `
           <td class="lb-rank font-mono">${medal}${entry.rank}</td>
           <td class="lb-name font-heading">${escapeHtml(entry.name)}</td>
           <td class="lb-score font-mono">${entry.score.toLocaleString()}</td>
           <td class="lb-level font-mono">${entry.level}</td>
           <td class="lb-duration font-mono">${formatDuration(entry.duration_s)}</td>
+          <td class="lb-info" title="${entry.weapon} | ${entry.version} | ${entry.platform}">${platformIcon} <span class="text-text-muted">${versionShort}</span></td>
           <td class="lb-date text-text-muted">${dateStr}</td>
         `;
         tbody.appendChild(tr);
@@ -138,10 +143,11 @@ import BaseLayout from "@layouts/BaseLayout.astro";
   .lb-score { text-align: right; }
   .lb-level { text-align: center; }
   .lb-duration { text-align: center; }
+  .lb-info { text-align: center; white-space: nowrap; }
   .lb-date { text-align: right; }
 
   @media (max-width: 639px) {
-    .lb-date {
+    .lb-date, .lb-info {
       display: none;
     }
     .leaderboard-table th,

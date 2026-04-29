@@ -12,7 +12,12 @@ export interface LeaderboardEntry {
   level: number;
   duration_s: number;
   date: string;
+  version: string;
+  weapon: string;
+  platform: string;
 }
+
+declare const __GAME_VERSION__: string;
 
 const SESSION_KEY = "bnet-session-id";
 const TOKEN_KEY = "bnet-session-token";
@@ -65,6 +70,7 @@ export async function submitScore(
   level: number,
   durationMs: number,
 ): Promise<{ accepted: boolean; rank: number | null }> {
+  const platform = window.matchMedia("(hover: none)").matches ? "mobile" : "desktop";
   const resp = await fetch(`/api/sessions/${session.sessionId}/score`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -74,6 +80,9 @@ export async function submitScore(
       score,
       level,
       duration_ms: durationMs,
+      version: typeof __GAME_VERSION__ !== "undefined" ? __GAME_VERSION__ : "unknown",
+      weapon: "yarn-ball",
+      platform,
     }),
   });
   if (!resp.ok) throw new Error(`Submit failed: ${resp.status}`);
