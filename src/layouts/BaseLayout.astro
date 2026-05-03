@@ -75,12 +75,16 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
           brutenis.net
         </a>
         <div class="flex gap-0 sm:gap-1 items-center flex-wrap justify-center sm:justify-start">
-          <a href="/blog" class="nav-link">Blog</a>
-          <a href="/projects" class="nav-link">Projects</a>
-          <a href="/games" class="nav-link">Games</a>
-          <a href="/ctf" class="nav-link">CTF</a>
-          <a href="/leaderboard" class="nav-link">Leaderboard</a>
-          <a href="/about" class="nav-link">About</a>
+          {[
+            { href: "/blog", label: "Blog" },
+            { href: "/projects", label: "Projects" },
+            { href: "/games", label: "Games" },
+            { href: "/ctf", label: "CTF" },
+            { href: "/leaderboard", label: "Leaderboard" },
+            { href: "/about", label: "About" },
+          ].map(({ href, label }) => (
+            <a href={href} class:list={["nav-link", { "nav-link-active": Astro.url.pathname.startsWith(href) || (href === "/blog" && Astro.url.pathname === "/") }]}>{label}</a>
+          ))}
         </div>
       </div>
     </nav>
@@ -121,6 +125,10 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
   .nav-link:hover {
     background-color: var(--color-bg-warm);
     color: var(--color-yarn-coral);
+  }
+  .nav-link-active {
+    color: var(--color-yarn-coral);
+    background-color: var(--color-bg-warm);
   }
 
   .yarn-canvas {
