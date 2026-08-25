@@ -1,4 +1,4 @@
-import { logEventsBatch, ensureSession, clearSession, type SessionTokens } from "./leaderboard-api";
+import { ensureSession, clearSession, type SessionTokens } from "./leaderboard-api";
 
 export interface GameEvent {
   seq: number;
@@ -7,9 +7,9 @@ export interface GameEvent {
   payload?: Record<string, unknown>;
 }
 
+/** Collects the game's event log in memory; it is sent once with the final score. */
 export class EventTracker {
   private events: GameEvent[] = [];
-  private pendingEvents: GameEvent[] = [];
   private nextSeq = 1;
   private startTime = 0;
   private session: SessionTokens | null = null;
@@ -21,7 +21,6 @@ export class EventTracker {
     this.startTime = performance.now();
     this.nextSeq = 1;
     this.events = [];
-    this.pendingEvents = [];
     try {
       this.session = await ensureSession();
     } catch {
@@ -38,15 +37,6 @@ export class EventTracker {
       timestamp_ms: Math.round(performance.now() - this.startTime),
     };
     this.events.push(entry);
-    this.pendingEvents.push(entry);
-  }
-
-  flush(): void {
-    if (!this.session || this.pendingEvents.length === 0) return;
-    const batch = this.pendingEvents.slice();
-    this.pendingEvents = [];
-    // Fire-and-forget — don't block the game loop
-    logEventsBatch(this.session, batch).catch(() => {});
   }
 
   getAll(): GameEvent[] {
@@ -63,7 +53,6 @@ export class EventTracker {
 
   reset(): void {
     this.events = [];
-    this.pendingEvents = [];
     this.nextSeq = 1;
     this.startTime = 0;
     this.session = null;

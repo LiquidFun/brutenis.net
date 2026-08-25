@@ -15,7 +15,7 @@ const gameVersion = (() => {
 
 export default defineConfig({
   site: 'https://brutenis.net',
-  integrations: [sitemap()],
+  integrations: [sitemap({ filter: (page) => !page.includes('/admin') })],
   vite: {
     plugins: [tailwindcss()],
     define: {

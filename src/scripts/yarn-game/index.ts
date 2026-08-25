@@ -15,8 +15,6 @@ const tracker = new EventTracker();
 (window as any).__gameEventTracker = tracker;
 let sessionStarted = false;
 let gameOverHandled = false;
-let eventFlushTimer = 0;
-const EVENT_FLUSH_INTERVAL = 10;
 
 const YARN_BALL_RADIUS = 14;
 
@@ -294,15 +292,6 @@ function animate(time: number) {
     if (upgrades) upgrades.draw(ctx, time / 1000);
     updateHUD();
 
-    // Periodic event flush
-    if (sessionStarted) {
-      eventFlushTimer += dt;
-      if (eventFlushTimer >= EVENT_FLUSH_INTERVAL) {
-        eventFlushTimer = 0;
-        tracker.flush();
-      }
-    }
-
     // Check game over state transition
     if (monsters.gameOver && !gameOverHandled) {
       gameOverHandled = true;
@@ -313,7 +302,6 @@ function animate(time: number) {
           final_level: monsters.level,
         },
       });
-      tracker.flush();
       setGameOverVisuals(true);
       initScoreSubmitUI();
     }
@@ -359,8 +347,9 @@ function initScoreSubmitUI() {
     btn.textContent = "Submitting...";
 
     try {
+      if (!monsters) throw new Error("No game state");
+      // May be null if the backend was down at game start; submitScore recovers.
       const session = tracker.getSession();
-      if (!session || !monsters) throw new Error("No session");
 
       const startEvent = tracker.getAll().find(e => e.event_type === "game_start");
       const endEvent = tracker.getAll().find(e => e.event_type === "game_over");
@@ -369,19 +358,23 @@ function initScoreSubmitUI() {
         : 0;
 
       const result = await apiSubmitScore(
-        session, name, monsters.score, monsters.level, durationMs,
+        session, name, monsters.score, monsters.level, durationMs, tracker.getAll(),
       );
       if (result.rank && rankEl) {
         rankEl.innerHTML = `You placed #${result.rank}! <a href="/leaderboard" class="submit-rank-link">View Leaderboard</a>`;
         rankEl.style.display = "";
         sessionStorage.setItem("lastSubmittedRank", String(result.rank));
+      } else if (!result.accepted && rankEl) {
+        rankEl.textContent = "Score recorded, but flagged as implausible.";
+        rankEl.style.display = "";
       }
       btn.textContent = "Submitted!";
       // Clear session so next game gets a fresh one
       clearSession();
       sessionStarted = false;
     } catch {
-      btn.textContent = "Failed - Try Again";
+      // Keep the score in memory so the player can retry when the backend returns
+      btn.textContent = "Server unreachable - Retry";
       btn.disabled = false;
     }
   });
