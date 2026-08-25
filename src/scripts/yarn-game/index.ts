@@ -1,3 +1,5 @@
+import { EventTracker } from "./event-tracker";
+import { submitScore as apiSubmitScore, clearSession } from "./leaderboard-api";
 import { MonsterManager } from "./monsters";
 import { UpgradeManager } from "./upgrades";
 
@@ -8,6 +10,11 @@ let upgrades: UpgradeManager | null = null;
 let lastTime = 0;
 let animId = 0;
 let initialized = false;
+
+const tracker = new EventTracker();
+(window as any).__gameEventTracker = tracker;
+let sessionStarted = false;
+let gameOverHandled = false;
 
 const YARN_BALL_RADIUS = 14;
 
@@ -234,6 +241,18 @@ function checkYarnBallVsMonsters() {
   }
   if (totalHits > 0 && !monsters.engaged) {
     monsters.engaged = true;
+    if (!sessionStarted) {
+      sessionStarted = true;
+      tracker.start().then(() => {
+        tracker.record({
+          event_type: "game_start",
+          payload: {
+            initial_score: monsters!.score,
+            initial_level: monsters!.level,
+          },
+        });
+      });
+    }
   }
 
   // Check upgrade pickup collision
@@ -274,8 +293,17 @@ function animate(time: number) {
     updateHUD();
 
     // Check game over state transition
-    if (monsters.gameOver) {
+    if (monsters.gameOver && !gameOverHandled) {
+      gameOverHandled = true;
+      tracker.record({
+        event_type: "game_over",
+        payload: {
+          final_score: monsters.score,
+          final_level: monsters.level,
+        },
+      });
       setGameOverVisuals(true);
+      initScoreSubmitUI();
     }
   } else {
     if (monsters.monsters.length > 0) {
@@ -290,6 +318,66 @@ function animate(time: number) {
   drawHint(ctx, dt);
 
   animId = requestAnimationFrame(animate);
+}
+
+function initScoreSubmitUI() {
+  const nameInput = document.getElementById("score-name-input") as HTMLInputElement | null;
+  if (nameInput) {
+    nameInput.value = localStorage.getItem("leaderboard-name") || "";
+  }
+
+  const submitBtn = document.getElementById("submit-score-btn");
+  if (!submitBtn) return;
+
+  const btn = submitBtn.cloneNode(true) as HTMLButtonElement;
+  submitBtn.replaceWith(btn);
+  btn.disabled = false;
+  btn.textContent = "Submit to Leaderboard";
+
+  const rankEl = document.getElementById("submit-rank");
+  if (rankEl) rankEl.style.display = "none";
+
+  btn.addEventListener("click", async () => {
+    const input = document.getElementById("score-name-input") as HTMLInputElement;
+    const name = input?.value?.trim();
+    if (!name) { input?.focus(); return; }
+
+    localStorage.setItem("leaderboard-name", name);
+    btn.disabled = true;
+    btn.textContent = "Submitting...";
+
+    try {
+      if (!monsters) throw new Error("No game state");
+      // May be null if the backend was down at game start; submitScore recovers.
+      const session = tracker.getSession();
+
+      const startEvent = tracker.getAll().find(e => e.event_type === "game_start");
+      const endEvent = tracker.getAll().find(e => e.event_type === "game_over");
+      const durationMs = startEvent && endEvent
+        ? endEvent.timestamp_ms - startEvent.timestamp_ms
+        : 0;
+
+      const result = await apiSubmitScore(
+        session, name, monsters.score, monsters.level, durationMs, tracker.getAll(),
+      );
+      if (result.rank && rankEl) {
+        rankEl.innerHTML = `You placed #${result.rank}! <a href="/leaderboard" class="submit-rank-link">View Leaderboard</a>`;
+        rankEl.style.display = "";
+        sessionStorage.setItem("lastSubmittedRank", String(result.rank));
+      } else if (!result.accepted && rankEl) {
+        rankEl.textContent = "Score recorded, but flagged as implausible.";
+        rankEl.style.display = "";
+      }
+      btn.textContent = "Submitted!";
+      // Clear session so next game gets a fresh one
+      clearSession();
+      sessionStarted = false;
+    } catch {
+      // Keep the score in memory so the player can retry when the backend returns
+      btn.textContent = "Server unreachable - Retry";
+      btn.disabled = false;
+    }
+  });
 }
 
 function initOverlayButtons() {
@@ -400,6 +488,7 @@ document.addEventListener("astro:page-load", () => {
     if (monsters) {
       // Clear game over visuals when navigating away
       setGameOverVisuals(false);
+      gameOverHandled = false;
       if (isListingPage()) {
         monsters.retarget();
       } else {

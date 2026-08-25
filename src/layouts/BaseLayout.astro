@@ -5,9 +5,10 @@ import { ClientRouter } from "astro:transitions";
 interface Props {
   title: string;
   description?: string;
+  noindex?: boolean;
 }
 
-const { title, description = "Brutenis's personal website - a yarn-tangled corner of the internet" } = Astro.props;
+const { title, description = "Brutenis's personal website - a yarn-tangled corner of the internet", noindex = false } = Astro.props;
 const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 ---
 
@@ -18,6 +19,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="generator" content={Astro.generator} />
     <meta name="description" content={description} />
+    {noindex && <meta name="robots" content="noindex, nofollow" />}
     <link rel="canonical" href={canonicalURL} />
 
     <!-- Open Graph -->
@@ -48,6 +50,11 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
         <h2 class="font-heading text-6xl font-bold text-yarn-coral mb-2">Game Over!</h2>
         <p class="font-heading text-2xl text-text-charcoal mb-1">Defended <span id="game-over-score">0</span> attacks</p>
         <p class="font-heading text-xl text-text-muted">Reached Level <span id="game-over-level">1</span></p>
+        <div id="score-submit-section" class="score-submit-section">
+          <input id="score-name-input" type="text" placeholder="Your name" maxlength="20" class="score-name-input" />
+          <button id="submit-score-btn" class="submit-score-btn">Submit to Leaderboard</button>
+          <p id="submit-rank" class="submit-rank" style="display:none"></p>
+        </div>
         <button id="try-again-btn" class="try-again-btn">Try Again</button>
         <button id="disable-attackers-btn" class="disable-attackers-btn">Disable Attackers</button>
       </div>
@@ -70,11 +77,16 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
           brutenis.net
         </a>
         <div class="flex gap-0 sm:gap-1 items-center flex-wrap justify-center sm:justify-start">
-          <a href="/blog" class="nav-link">Blog</a>
-          <a href="/projects" class="nav-link">Projects</a>
-          <a href="/games" class="nav-link">Games</a>
-          <a href="/ctf" class="nav-link">CTF</a>
-          <a href="/about" class="nav-link">About</a>
+          {[
+            { href: "/blog", label: "Blog" },
+            { href: "/projects", label: "Projects" },
+            { href: "/games", label: "Games" },
+            { href: "/ctf", label: "CTF" },
+            { href: "/leaderboard", label: "Leaderboard" },
+            { href: "/about", label: "About" },
+          ].map(({ href, label }) => (
+            <a href={href} class:list={["nav-link", { "nav-link-active": Astro.url.pathname.startsWith(href) || (href === "/blog" && Astro.url.pathname === "/") }]}>{label}</a>
+          ))}
         </div>
       </div>
     </nav>
@@ -115,6 +127,10 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
   .nav-link:hover {
     background-color: var(--color-bg-warm);
     color: var(--color-yarn-coral);
+  }
+  .nav-link-active {
+    color: var(--color-yarn-coral);
+    background-color: var(--color-bg-warm);
   }
 
   .yarn-canvas {
@@ -310,6 +326,78 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     background: var(--color-text-muted);
     color: white;
     transform: translateY(-2px);
+  }
+
+  .score-submit-section {
+    margin-top: 1rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .score-name-input {
+    font-family: var(--font-body);
+    font-size: 1.1rem;
+    padding: 0.5rem 1rem;
+    border: 2px dashed var(--color-yarn-teal);
+    border-radius: 0.75rem;
+    background: white;
+    color: var(--color-text-charcoal);
+    width: 100%;
+    max-width: 240px;
+    text-align: center;
+    outline: none;
+    box-sizing: border-box;
+  }
+
+  .score-name-input:focus {
+    border-style: solid;
+    border-color: var(--color-yarn-teal);
+  }
+
+  .submit-score-btn {
+    margin-top: 0.5rem;
+    padding: 0.6rem 2rem;
+    border: 2px solid var(--color-yarn-teal);
+    border-radius: 0.75rem;
+    font-family: var(--font-heading);
+    font-size: 1.4rem;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 100%;
+    box-sizing: border-box;
+    background: var(--color-yarn-teal);
+    color: white;
+  }
+
+  .submit-score-btn:hover {
+    opacity: 0.85;
+    transform: translateY(-2px);
+  }
+
+  .submit-score-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  .submit-rank {
+    font-family: var(--font-heading);
+    font-size: 1.3rem;
+    color: var(--color-yarn-coral);
+    margin-top: 0.25rem;
+    font-weight: 700;
+  }
+
+  .submit-rank-link {
+    display: inline-block;
+    margin-top: 0.25rem;
+    font-size: 1.1rem;
+    color: var(--color-yarn-teal);
+    text-decoration: underline;
+    font-weight: 400;
+  }
+
+  .submit-rank-link:hover {
+    color: var(--color-text-charcoal);
   }
 
   .gyro-permission-box {

@@ -1,0 +1,261 @@
+---
+import BaseLayout from "@layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="Leaderboard" description="Game leaderboard - top scores defending blog posts">
+  <h1 class="text-5xl font-heading font-bold text-yarn-yellow mb-8">Leaderboard</h1>
+  <p class="font-body text-text-muted mb-6">
+    Top scores from defending blog posts against monsters. Play the game on any
+    <a href="/blog" class="text-yarn-coral hover:underline">listing page</a> and submit your score!
+  </p>
+
+  <div id="leaderboard-container">
+    <p id="leaderboard-loading" class="font-heading text-xl text-text-muted">Loading scores...</p>
+
+    <div id="leaderboard-table-wrap" class="leaderboard-table-wrap" style="display:none">
+      <table class="leaderboard-table">
+        <thead>
+          <tr>
+            <th class="lb-rank">#</th>
+            <th class="lb-name">Name</th>
+            <th class="lb-score">Score</th>
+            <th class="lb-level">Level</th>
+            <th class="lb-duration">Duration</th>
+            <th class="lb-info">Info</th>
+            <th class="lb-date">Date</th>
+          </tr>
+        </thead>
+        <tbody id="leaderboard-body">
+        </tbody>
+      </table>
+    </div>
+  </div>
+</BaseLayout>
+
+<script>
+  import { fetchLeaderboard } from "@scripts/yarn-game/leaderboard-api";
+
+  function escapeHtml(str: string): string {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  }
+
+  function formatDuration(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  }
+
+  /** ISO-style local timestamp without the "T": 2026-08-25 20:55 */
+  function formatDate(iso: string): string {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+
+  async function loadLeaderboard() {
+    const tbody = document.getElementById("leaderboard-body");
+    const tableWrap = document.getElementById("leaderboard-table-wrap");
+    const loading = document.getElementById("leaderboard-loading");
+    if (!tbody) return;
+
+    try {
+      const data = await fetchLeaderboard(50);
+      if (data.entries.length === 0) {
+        if (loading) loading.textContent = "No scores yet. Be the first!";
+        return;
+      }
+
+      const highlightRank = sessionStorage.getItem("lastSubmittedRank");
+      const medals = ["", "\u{1F947}", "\u{1F948}", "\u{1F949}"];
+
+      for (const entry of data.entries) {
+        const tr = document.createElement("tr");
+        if (highlightRank && entry.rank === Number(highlightRank)) {
+          tr.classList.add("lb-highlight");
+        }
+
+        if (entry.rank <= 3) tr.classList.add(`lb-top${entry.rank}`);
+
+        const rankCell = entry.rank <= 3
+          ? `<span class="lb-medal">${medals[entry.rank]}</span>`
+          : `<span class="lb-rank-num">${entry.rank}</span>`;
+        const isMobile = entry.platform === "mobile";
+        const platformIcon = isMobile ? "\u{1F4F1}" : "\u{1F5A5}";
+        const platformLabel = isMobile ? "Mobile" : "Desktop";
+
+        tr.innerHTML = `
+          <td class="lb-rank">${rankCell}</td>
+          <td class="lb-name">${escapeHtml(entry.name)}</td>
+          <td class="lb-score font-mono">${entry.score.toLocaleString()}</td>
+          <td class="lb-level font-mono">${entry.level}</td>
+          <td class="lb-duration font-mono">${formatDuration(entry.duration_s)}</td>
+          <td class="lb-info" title="${entry.weapon}"><span class="lb-platform-icon">${platformIcon}</span>${platformLabel}</td>
+          <td class="lb-date font-mono">${formatDate(entry.date)}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+
+      if (loading) loading.style.display = "none";
+      if (tableWrap) tableWrap.style.display = "";
+    } catch {
+      if (loading) {
+        loading.textContent =
+          "Scores are unavailable right now \u2014 the leaderboard server isn't responding. The game still works!";
+      }
+    }
+  }
+
+  document.addEventListener("astro:page-load", loadLeaderboard);
+</script>
+
+<!-- is:global is required: the rows are built at runtime by the script above, so
+     they never receive Astro's scoping attribute and scoped rules would not match
+     them. Every selector is therefore rooted at .leaderboard-table* to avoid leaking. -->
+<style is:global>
+  .leaderboard-table-wrap {
+    overflow-x: auto;
+    background: rgba(255, 255, 255, 0.6);
+    border: 2px dashed rgba(255, 107, 107, 0.35);
+    border-radius: 1rem;
+    padding: 0.5rem 0.75rem 0.75rem;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
+  }
+
+  .leaderboard-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-body);
+  }
+
+  /* Every column is centred; the name is the one thing you should be able to
+     read at a glance, so it gets the heading font at a larger size. */
+  .leaderboard-table th,
+  .leaderboard-table td {
+    text-align: center;
+    vertical-align: middle;
+  }
+
+  .leaderboard-table th {
+    font-family: var(--font-heading);
+    font-size: 1.05rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 2px dashed var(--color-yarn-coral);
+    color: var(--color-text-muted);
+  }
+
+  .leaderboard-table td {
+    padding: 0.7rem 0.75rem;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+  }
+
+  .leaderboard-table tbody tr:last-child td {
+    border-bottom: none;
+  }
+
+  .leaderboard-table tbody tr {
+    transition: background 0.15s ease;
+  }
+
+  .leaderboard-table tbody tr:hover {
+    background: rgba(255, 107, 107, 0.07);
+  }
+
+  .leaderboard-table .lb-rank {
+    width: 4.5rem;
+  }
+
+  .leaderboard-table .lb-medal {
+    font-size: 1.8rem;
+    line-height: 1;
+  }
+
+  .leaderboard-table .lb-rank-num {
+    font-family: var(--font-heading);
+    font-size: 1.25rem;
+    color: var(--color-text-muted);
+  }
+
+  .leaderboard-table .lb-name {
+    font-family: var(--font-heading);
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: var(--color-text-charcoal);
+    line-height: 1.2;
+    max-width: 14rem;
+    overflow-wrap: anywhere;
+  }
+
+  .leaderboard-table .lb-score {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--color-yarn-coral);
+  }
+
+  .leaderboard-table .lb-level,
+  .leaderboard-table .lb-duration {
+    font-size: 1rem;
+    color: var(--color-text-charcoal);
+  }
+
+  .leaderboard-table .lb-info {
+    white-space: nowrap;
+    font-size: 0.95rem;
+    color: var(--color-text-muted);
+  }
+
+  .leaderboard-table .lb-platform-icon {
+    font-size: 1.1rem;
+    margin-right: 0.3rem;
+  }
+
+  .leaderboard-table .lb-date {
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+    white-space: nowrap;
+  }
+
+  /* Podium */
+  .leaderboard-table .lb-top1 { background: rgba(255, 199, 0, 0.13); }
+  .leaderboard-table .lb-top2 { background: rgba(150, 150, 150, 0.13); }
+  .leaderboard-table .lb-top3 { background: rgba(205, 127, 50, 0.13); }
+
+  .leaderboard-table .lb-top1 .lb-name { font-size: 1.9rem; }
+  .leaderboard-table .lb-top1 .lb-score { font-size: 1.6rem; }
+  .leaderboard-table .lb-top2 .lb-name,
+  .leaderboard-table .lb-top3 .lb-name { font-size: 1.75rem; }
+
+  .leaderboard-table .lb-highlight {
+    box-shadow: inset 3px 0 0 var(--color-yarn-teal);
+    background: rgba(78, 205, 196, 0.14);
+  }
+
+  @media (max-width: 639px) {
+    .leaderboard-table .lb-date,
+    .leaderboard-table .lb-info {
+      display: none;
+    }
+    .leaderboard-table-wrap {
+      padding: 0.25rem 0.4rem 0.5rem;
+    }
+    .leaderboard-table th,
+    .leaderboard-table td {
+      padding: 0.5rem 0.35rem;
+    }
+    .leaderboard-table th {
+      font-size: 0.8rem;
+    }
+    .leaderboard-table .lb-name { font-size: 1.25rem; max-width: 8rem; }
+    .leaderboard-table .lb-top1 .lb-name { font-size: 1.4rem; }
+    .leaderboard-table .lb-top2 .lb-name,
+    .leaderboard-table .lb-top3 .lb-name { font-size: 1.3rem; }
+    .leaderboard-table .lb-score { font-size: 1.1rem; }
+    .leaderboard-table .lb-top1 .lb-score { font-size: 1.25rem; }
+    .leaderboard-table .lb-medal { font-size: 1.5rem; }
+  }
+</style>

@@ -1,0 +1,412 @@
+---
+import BaseLayout from "@layouts/BaseLayout.astro";
+---
+
+<BaseLayout title="Admin" description="Leaderboard administration" noindex={true}>
+  <h1 class="text-5xl font-heading font-bold text-yarn-coral mb-2">Admin</h1>
+  <p class="font-body text-text-muted mb-6">
+    Every submitted run, newest first. Marking a run as cheated hides it from the
+    public leaderboard; nothing is deleted.
+  </p>
+
+  <p id="admin-status" class="font-heading text-xl text-text-muted">Loading runs...</p>
+
+  <div id="admin-table-wrap" class="admin-table-wrap" style="display:none">
+    <table class="admin-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th class="num">Score</th>
+          <th class="num">Lvl</th>
+          <th class="num">Duration</th>
+          <th class="num">Events</th>
+          <th>Date</th>
+          <th>Flags</th>
+          <th>State</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody id="admin-body"></tbody>
+    </table>
+  </div>
+</BaseLayout>
+
+<script>
+  interface AdminSession {
+    session_id: string;
+    name: string;
+    score: number;
+    level: number;
+    duration_s: number;
+    date: string;
+    version: string;
+    platform: string;
+    is_valid: boolean;
+    notes: string[];
+    replay_events: number;
+  }
+
+  function formatDuration(seconds: number): string {
+    const m = Math.floor(seconds / 60);
+    const s = Math.round(seconds % 60);
+    return m > 0 ? `${m}m ${s}s` : `${s}s`;
+  }
+
+  /** ISO-style local timestamp without the "T": 2026-08-25 20:55 */
+  function formatDate(iso: string): string {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Number.isNaN(d.getTime())) return "";
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+
+  interface ReplayEvent {
+    seq: number;
+    event_type: string;
+    timestamp_ms: number;
+    payload?: Record<string, unknown> | null;
+  }
+
+  async function fetchReplay(sessionId: string): Promise<ReplayEvent[]> {
+    const resp = await fetch(`/admin/api/sessions/${sessionId}/replay`);
+    if (!resp.ok) throw new Error(`Replay failed: ${resp.status}`);
+    return (await resp.json()).events as ReplayEvent[];
+  }
+
+  /** Row inserted under a run to list its replay events; toggled by the Events cell. */
+  function buildReplayRow(colSpan: number, events: ReplayEvent[]): HTMLTableRowElement {
+    const tr = document.createElement("tr");
+    tr.className = "replay-row";
+    const td = document.createElement("td");
+    td.colSpan = colSpan;
+
+    if (events.length === 0) {
+      td.textContent = "No replay stored for this run.";
+    } else {
+      const list = document.createElement("ol");
+      list.className = "replay-list";
+      for (const e of events) {
+        const li = document.createElement("li");
+        const time = document.createElement("span");
+        time.className = "replay-time";
+        time.textContent = `${(e.timestamp_ms / 1000).toFixed(1)}s`;
+        const type = document.createElement("span");
+        type.className = "replay-type";
+        type.textContent = e.event_type;
+        li.append(time, type);
+        if (e.payload && Object.keys(e.payload).length > 0) {
+          const payload = document.createElement("span");
+          payload.className = "replay-payload";
+          payload.textContent = Object.entries(e.payload)
+            .map(([k, v]) => `${k}=${v}`)
+            .join(" ");
+          li.appendChild(payload);
+        }
+        list.appendChild(li);
+      }
+      td.appendChild(list);
+    }
+
+    tr.appendChild(td);
+    return tr;
+  }
+
+  function setStatus(msg: string) {
+    const el = document.getElementById("admin-status");
+    if (el) {
+      el.textContent = msg;
+      el.style.display = msg ? "" : "none";
+    }
+  }
+
+  async function setValidity(sessionId: string, isValid: boolean, reason: string) {
+    const resp = await fetch(`/admin/api/sessions/${sessionId}/validity`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ is_valid: isValid, reason }),
+    });
+    if (!resp.ok) throw new Error(`Update failed: ${resp.status}`);
+    return (await resp.json()) as AdminSession;
+  }
+
+  function renderRow(tr: HTMLTableRowElement, s: AdminSession) {
+    tr.classList.toggle("row-invalid", !s.is_valid);
+
+    // Drop a stale expanded replay so the toggle arrow stays in sync
+    if (tr.nextElementSibling?.classList.contains("replay-row")) {
+      tr.nextElementSibling.remove();
+    }
+
+    const cells = [
+      s.name,
+      s.score.toLocaleString(),
+      String(s.level),
+      formatDuration(s.duration_s),
+    ];
+
+    tr.replaceChildren();
+    for (const [i, text] of cells.entries()) {
+      const td = document.createElement("td");
+      if (i >= 1) td.className = "num font-mono";
+      td.textContent = text;
+      tr.appendChild(td);
+    }
+
+    // Events cell: click to expand the stored replay underneath this row
+    const eventsCell = document.createElement("td");
+    eventsCell.className = "num";
+    if (s.replay_events === 0) {
+      eventsCell.textContent = "0";
+      eventsCell.classList.add("events-empty");
+    } else {
+      const toggle = document.createElement("button");
+      toggle.className = "events-toggle";
+      toggle.textContent = `${s.replay_events} \u25BE`;
+      toggle.addEventListener("click", async () => {
+        const existing = tr.nextElementSibling;
+        if (existing?.classList.contains("replay-row")) {
+          existing.remove();
+          toggle.textContent = `${s.replay_events} \u25BE`;
+          return;
+        }
+        toggle.disabled = true;
+        try {
+          const events = await fetchReplay(s.session_id);
+          tr.after(buildReplayRow(tr.children.length, events));
+          toggle.textContent = `${s.replay_events} \u25B4`;
+        } catch (e) {
+          setStatus(String(e));
+        } finally {
+          toggle.disabled = false;
+        }
+      });
+      eventsCell.appendChild(toggle);
+    }
+    tr.appendChild(eventsCell);
+
+    const dateCell = document.createElement("td");
+    dateCell.className = "font-mono";
+    dateCell.textContent = formatDate(s.date);
+    tr.appendChild(dateCell);
+
+    const flags = document.createElement("td");
+    flags.className = "flags";
+    flags.textContent = s.notes.join(", ");
+    flags.title = `${s.session_id} | ${s.version} | ${s.platform}`;
+    tr.appendChild(flags);
+
+    const state = document.createElement("td");
+    state.className = s.is_valid ? "state-ok" : "state-bad";
+    state.textContent = s.is_valid ? "shown" : "hidden";
+    tr.appendChild(state);
+
+    const actions = document.createElement("td");
+    const btn = document.createElement("button");
+    btn.className = s.is_valid ? "admin-btn" : "admin-btn admin-btn-restore";
+    btn.textContent = s.is_valid ? "Mark cheated" : "Restore";
+    btn.addEventListener("click", async () => {
+      const target = !s.is_valid;
+      let reason = "";
+      if (!target) {
+        const input = prompt("Reason (optional):");
+        if (input === null) return; // cancelled — leave the run untouched
+        reason = input;
+      }
+      btn.disabled = true;
+      try {
+        renderRow(tr, await setValidity(s.session_id, target, reason));
+      } catch (e) {
+        btn.disabled = false;
+        setStatus(String(e));
+      }
+    });
+    actions.appendChild(btn);
+    tr.appendChild(actions);
+  }
+
+  async function loadAdmin() {
+    const tbody = document.getElementById("admin-body");
+    const wrap = document.getElementById("admin-table-wrap");
+    if (!tbody) return;
+
+    try {
+      const resp = await fetch("/admin/api/sessions");
+      if (!resp.ok) throw new Error(`Fetch failed: ${resp.status}`);
+      const data = (await resp.json()) as { sessions: AdminSession[]; total: number };
+
+      if (data.sessions.length === 0) {
+        setStatus("No runs submitted yet.");
+        return;
+      }
+
+      tbody.replaceChildren();
+      for (const s of data.sessions) {
+        const tr = document.createElement("tr");
+        renderRow(tr, s);
+        tbody.appendChild(tr);
+      }
+
+      setStatus("");
+      if (wrap) wrap.style.display = "";
+    } catch {
+      setStatus("Failed to load runs.");
+    }
+  }
+
+  document.addEventListener("astro:page-load", loadAdmin);
+</script>
+
+<!-- is:global is required: the rows are built at runtime by the script above, so
+     they never receive Astro's scoping attribute and scoped rules would not match
+     them. Every selector is therefore rooted at .admin-table* to avoid leaking. -->
+<style is:global>
+  .admin-table-wrap {
+    overflow-x: auto;
+  }
+
+  .admin-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-family: var(--font-body);
+    font-size: 0.9rem;
+  }
+
+  .admin-table th,
+  .admin-table td {
+    text-align: center;
+    vertical-align: middle;
+  }
+
+  .admin-table th {
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    padding: 0.5rem 0.6rem;
+    border-bottom: 2px dashed var(--color-yarn-coral);
+    color: var(--color-text-charcoal);
+    white-space: nowrap;
+  }
+
+  .admin-table td {
+    padding: 0.45rem 0.6rem;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+    white-space: nowrap;
+  }
+
+  .admin-table .flags {
+    white-space: normal;
+    max-width: 20rem;
+    font-size: 0.8rem;
+    color: var(--color-text-muted);
+  }
+
+  .admin-table .row-invalid {
+    opacity: 0.55;
+    background: rgba(255, 107, 107, 0.06);
+  }
+
+  .admin-table .state-ok {
+    color: var(--color-yarn-teal);
+  }
+
+  .admin-table .state-bad {
+    color: var(--color-yarn-coral);
+  }
+
+  .admin-table .events-empty {
+    color: var(--color-text-muted);
+  }
+
+  .admin-table .events-toggle {
+    font-family: var(--font-mono, monospace);
+    font-size: 0.9rem;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--color-yarn-teal);
+    border-radius: 0.4rem;
+    background: transparent;
+    color: var(--color-yarn-teal);
+    cursor: pointer;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+
+  .admin-table .events-toggle:hover:not(:disabled) {
+    background: var(--color-yarn-teal);
+    color: white;
+  }
+
+  .admin-table .events-toggle:disabled {
+    opacity: 0.5;
+    cursor: wait;
+  }
+
+  .admin-table .replay-row > td {
+    text-align: left;
+    white-space: normal;
+    background: rgba(0, 0, 0, 0.03);
+    padding: 0.6rem 1rem;
+  }
+
+  .admin-table .replay-list {
+    margin: 0;
+    padding-left: 1.5rem;
+    max-height: 20rem;
+    overflow-y: auto;
+    font-family: var(--font-mono, monospace);
+    font-size: 0.8rem;
+    line-height: 1.6;
+    list-style: decimal;
+    color: var(--color-text-charcoal);
+  }
+
+  .admin-table .replay-time {
+    display: inline-block;
+    min-width: 4rem;
+    color: var(--color-text-muted);
+  }
+
+  .admin-table .replay-type {
+    display: inline-block;
+    min-width: 10rem;
+    font-weight: 700;
+  }
+
+  .admin-table .replay-payload {
+    color: var(--color-text-muted);
+  }
+
+  .admin-table .admin-btn {
+    font-family: var(--font-heading);
+    font-size: 1rem;
+    line-height: 1;
+    padding: 0.5rem 1.1rem;
+    border: none;
+    border-radius: 0.6rem;
+    background: var(--color-yarn-coral);
+    color: white;
+    cursor: pointer;
+    white-space: nowrap;
+    box-shadow: 0 2px 0 rgba(0, 0, 0, 0.18);
+    transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.2s ease;
+  }
+
+  .admin-table .admin-btn:hover:not(:disabled) {
+    background: var(--color-accent-hover);
+    transform: translateY(-1px);
+    box-shadow: 0 3px 0 rgba(0, 0, 0, 0.18);
+  }
+
+  .admin-table .admin-btn:active:not(:disabled) {
+    transform: translateY(1px);
+    box-shadow: 0 1px 0 rgba(0, 0, 0, 0.18);
+  }
+
+  .admin-table .admin-btn-restore {
+    background: var(--color-yarn-teal);
+  }
+
+  .admin-table .admin-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    box-shadow: none;
+  }
+</style>

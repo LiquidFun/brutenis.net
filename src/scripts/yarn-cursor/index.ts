@@ -32,6 +32,18 @@ let gyroHintShown = false;
 // ── Radius bonus from upgrades ──
 let ballRadiusBonus = 0;
 
+// ── Visibility: hide on deeper pages (no game) or when game disabled ──
+function shouldShowCursor(): boolean {
+  if (!attackersEnabled) return false;
+  const path = location.pathname.replace(/\/$/, "") || "/";
+  // /blog/tag/* is a listing page with cards, keep cursor
+  if (/^\/blog\/tag\//.test(path)) return true;
+  // Hide on any deeper page (2+ path segments = individual post/project/game/ctf)
+  const segments = path.split("/").filter(Boolean);
+  if (segments.length >= 2) return false;
+  return true;
+}
+
 // ── Extra ball configs ──
 const EXTRA_ROPE_CONFIGS = [
   { numPoints: 15, segLen: 10, color: "#74b9ff" },
@@ -185,13 +197,15 @@ function animate(time: number) {
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  // Draw extra balls first (behind primary)
-  for (let i = ropes.length - 1; i >= 0; i--) {
-    const entry = ropes[i];
-    entry.rope.update(mouseX, mouseY, dt);
-    const points = entry.rope.getPoints();
-    drawRope(ctx, points, entry.color);
-    drawYarnBall(ctx, entry.ball, points);
+  if (shouldShowCursor()) {
+    // Draw extra balls first (behind primary)
+    for (let i = ropes.length - 1; i >= 0; i--) {
+      const entry = ropes[i];
+      entry.rope.update(mouseX, mouseY, dt);
+      const points = entry.rope.getPoints();
+      drawRope(ctx, points, entry.color);
+      drawYarnBall(ctx, entry.ball, points);
+    }
   }
 
   animId = requestAnimationFrame(animate);
@@ -313,7 +327,7 @@ function animateGyro(time: number) {
   const dt = Math.min((time - gyroLastTime) / 1000, 0.033);
   gyroLastTime = time;
   ctx.clearRect(0, 0, canvas.width, canvas.height);
-  if (attackersEnabled) {
+  if (shouldShowCursor()) {
     // Update and draw all gyro balls (extras behind primary)
     for (let i = gyroBalls.length - 1; i >= 0; i--) {
       gyroBalls[i].update(dt, canvas.width, canvas.height);
