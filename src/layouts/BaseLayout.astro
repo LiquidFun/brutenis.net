@@ -36,16 +36,6 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     <canvas id="yarn-game-canvas" class="yarn-canvas yarn-canvas-game" transition:persist="yarn-game-canvas"></canvas>
     <!-- Cursor canvas (above content) -->
     <canvas id="yarn-cursor-canvas" class="yarn-canvas yarn-canvas-cursor" transition:persist="yarn-cursor-canvas"></canvas>
-    <!-- Game HUD + attackers toggle -->
-    <div id="game-hud" class="game-hud" title="Start Game" transition:persist="game-hud">
-      <span class="hud-sword">&#x2694;</span>
-      <span class="font-heading text-lg hud-play-label">Play</span>
-      <span class="hud-sword hud-sword-end">&#x2694;</span>
-      <span id="hud-disable-label" class="font-heading text-lg hud-label">Disable Game</span>
-      <span id="hud-separator" class="hud-separator start-hidden">|</span>
-      <span id="game-score-wrap" class="font-heading text-lg hud-score start-hidden">Defended: <span id="game-score">0</span></span>
-      <span class="hud-dismiss">&times;</span>
-    </div>
     <!-- Game over overlay -->
     <div id="game-over-overlay" class="game-over-overlay start-hidden" transition:persist="game-over-overlay">
       <div class="game-over-box">
@@ -89,6 +79,20 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
           ].map(({ href, label }) => (
             <a href={href} class:list={["nav-link", { "nav-link-active": Astro.url.pathname.startsWith(href) || (href === "/blog" && Astro.url.pathname === "/") }]}>{label}</a>
           ))}
+          <!--
+            Game HUD + attackers toggle. It lives in the nav row so that on desktop
+            it flows next to the links instead of floating over them; on touch
+            devices it is position:fixed and keeps its old bottom-centre placement.
+          -->
+          <div id="game-hud" class="game-hud" title="Start Game" transition:persist="game-hud">
+            <span class="hud-sword">&#x2694;</span>
+            <span class="font-heading text-lg hud-play-label">Play</span>
+            <span class="hud-sword hud-sword-end">&#x2694;</span>
+            <span id="hud-disable-label" class="font-heading text-lg hud-label">Disable Game</span>
+            <span id="hud-separator" class="hud-separator start-hidden">|</span>
+            <span id="game-score-wrap" class="font-heading text-lg hud-score start-hidden">Defended: <span id="game-score">0</span></span>
+            <span class="hud-dismiss">&times;</span>
+          </div>
         </div>
       </div>
     </nav>
@@ -276,23 +280,28 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     }
   }
 
-  /* Desktop: the HUD stays parked in the top-right corner in both states, and the
-     "game off" state spells out "⚔ Play ⚔" instead of collapsing to a sword circle. */
+  /* Desktop: the HUD is a normal item in the nav row (so it can never cover the
+     links), and the "game off" state spells out "⚔ Play ⚔" rather than collapsing
+     to a sword circle. Both states sit in the same place, so nothing jumps. */
   @media (hover: hover) and (pointer: fine) {
-    /* Below the sticky nav: the expanded pill is wide enough to cover the nav
-       links on narrower desktop windows if it sat in the nav row itself. */
     .game-hud {
-      top: 5.25rem;
-      right: 0.55rem;
+      position: static;
       transform: none;
+      margin-left: 0.4rem;
+      padding: 0.3rem 0.85rem;
+      gap: 0.4rem;
+      box-shadow: 0 1px 6px rgba(255, 107, 107, 0.18);
+      /* Hold the pill's height when its text is hidden, so the nav row does not
+         twitch as the label and score come and go. */
+      min-height: 2.2rem;
     }
 
     .game-hud-collapsed {
       width: auto;
       height: auto;
-      padding: 0.5rem 1.2rem;
+      padding: 0.3rem 0.85rem;
       border-radius: 2rem;
-      gap: 0.45rem;
+      gap: 0.4rem;
     }
 
     .game-hud-collapsed .hud-sword {
@@ -306,10 +315,15 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     }
   }
 
-  /* Narrow desktop windows stack the nav into two rows, so sit lower still. */
-  @media (hover: hover) and (pointer: fine) and (max-width: 639px) {
-    .game-hud {
-      top: 7rem;
+  /* Under ~1150px the nav row cannot fit the logo, the links, the "Disable Game"
+     hint and the score at once, and the button would drop onto a second line
+     mid-game. Drop the hint (the × and the tooltip still say what a click does)
+     and the row survives down to 1024. !important because the game script sets
+     these spans' display inline. */
+  @media (hover: hover) and (pointer: fine) and (max-width: 1150px) {
+    .game-hud .hud-label,
+    .game-hud .hud-separator {
+      display: none !important;
     }
   }
 

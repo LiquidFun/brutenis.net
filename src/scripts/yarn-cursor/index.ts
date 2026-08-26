@@ -252,7 +252,9 @@ function syncButton() {
   const hud = document.getElementById("game-hud");
   if (!hud) return;
   hud.classList.toggle("game-hud-collapsed", !attackersEnabled);
-  hud.title = attackersEnabled ? "" : "Start Game";
+  // Narrow desktop windows hide the "Disable Game" wording to keep the nav on
+  // one row, so the tooltip carries it instead of being empty while playing.
+  hud.title = attackersEnabled ? "Disable Game" : "Start Game";
 
   const label = document.getElementById("hud-disable-label");
   const separator = document.getElementById("hud-separator");
