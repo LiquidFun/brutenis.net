@@ -36,6 +36,23 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     <canvas id="yarn-game-canvas" class="yarn-canvas yarn-canvas-game" transition:persist="yarn-game-canvas"></canvas>
     <!-- Cursor canvas (above content) -->
     <canvas id="yarn-cursor-canvas" class="yarn-canvas yarn-canvas-cursor" transition:persist="yarn-cursor-canvas"></canvas>
+    <!--
+      Game HUD + attackers toggle. It stays a direct child of <body>: it is
+      transition:persist, and a persisted element inside <nav> would be moved
+      into each incoming nav on every client-side navigation, which restarts its
+      CSS transitions and makes the whole row flicker. On desktop it is pinned to
+      the right of the nav bar, on touch devices it keeps its old bottom-centre
+      placement.
+    -->
+    <div id="game-hud" class="game-hud" title="Start Game" transition:persist="game-hud">
+      <span class="hud-sword">&#x2694;</span>
+      <span class="font-heading text-lg hud-play-label">Play</span>
+      <span class="hud-sword hud-sword-end">&#x2694;</span>
+      <span id="hud-disable-label" class="font-heading text-lg hud-label">Disable Game</span>
+      <span id="hud-separator" class="hud-separator start-hidden">|</span>
+      <span id="game-score-wrap" class="font-heading text-lg hud-score start-hidden">Defended: <span id="game-score">0</span></span>
+      <span class="hud-dismiss">&times;</span>
+    </div>
     <!-- Game over overlay -->
     <div id="game-over-overlay" class="game-over-overlay start-hidden" transition:persist="game-over-overlay">
       <div class="game-over-box">
@@ -68,7 +85,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
         <a href="/" class="logo-link" id="animated-logo" transition:persist="animated-logo">
           brutenis.net
         </a>
-        <div class="flex gap-0 sm:gap-1 items-center flex-wrap justify-center sm:justify-start">
+        <div class="nav-links flex gap-0 sm:gap-1 items-center flex-wrap justify-center sm:justify-start">
           {[
             { href: "/blog", label: "Blog" },
             { href: "/projects", label: "Projects" },
@@ -79,20 +96,6 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
           ].map(({ href, label }) => (
             <a href={href} class:list={["nav-link", { "nav-link-active": Astro.url.pathname.startsWith(href) || (href === "/blog" && Astro.url.pathname === "/") }]}>{label}</a>
           ))}
-          <!--
-            Game HUD + attackers toggle. It lives in the nav row so that on desktop
-            it flows next to the links instead of floating over them; on touch
-            devices it is position:fixed and keeps its old bottom-centre placement.
-          -->
-          <div id="game-hud" class="game-hud" title="Start Game" transition:persist="game-hud">
-            <span class="hud-sword">&#x2694;</span>
-            <span class="font-heading text-lg hud-play-label">Play</span>
-            <span class="hud-sword hud-sword-end">&#x2694;</span>
-            <span id="hud-disable-label" class="font-heading text-lg hud-label">Disable Game</span>
-            <span id="hud-separator" class="hud-separator start-hidden">|</span>
-            <span id="game-score-wrap" class="font-heading text-lg hud-score start-hidden">Defended: <span id="game-score">0</span></span>
-            <span class="hud-dismiss">&times;</span>
-          </div>
         </div>
       </div>
     </nav>
@@ -284,16 +287,26 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
      links), and the "game off" state spells out "⚔ Play ⚔" rather than collapsing
      to a sword circle. Both states sit in the same place, so nothing jumps. */
   @media (hover: hover) and (pointer: fine) {
+    /* Pinned to the right edge of the window, vertically centred in the nav bar,
+       which is sticky at the top, so the two stay aligned while scrolling. */
     .game-hud {
-      position: static;
+      top: 0.9rem;
+      right: 1rem;
       transform: none;
-      margin-left: 0.4rem;
       padding: 0.3rem 0.85rem;
       gap: 0.4rem;
       box-shadow: 0 1px 6px rgba(255, 107, 107, 0.18);
-      /* Hold the pill's height when its text is hidden, so the nav row does not
-         twitch as the label and score come and go. */
-      min-height: 2.2rem;
+      /* Hold the pill's height when its text is hidden, so it does not twitch as
+         the label and score come and go. */
+      min-height: 2.55rem;
+    }
+
+    /* The button floats over the nav, so the links reserve room for it — but only
+       once the window is too narrow for it to fit in the margin beside the 64rem
+       content column. On a wide screen the reserve is 0 and the logo and links
+       sit exactly where they always have. */
+    .nav-links {
+      margin-right: max(0px, calc(15.1rem - max(0px, (100vw - 64rem) / 2)));
     }
 
     .game-hud-collapsed {
@@ -324,6 +337,11 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     .game-hud .hud-label,
     .game-hud .hud-separator {
       display: none !important;
+    }
+
+    /* Same reserve, sized for the narrower button this rule produces. */
+    .nav-links {
+      margin-right: max(0px, calc(9.1rem - max(0px, (100vw - 64rem) / 2)));
     }
   }
 

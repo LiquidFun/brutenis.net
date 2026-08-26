@@ -52,6 +52,17 @@ export default defineConfig({
     },
   },
 
+  build: {
+    // Never inline stylesheets, even small ones. Astro's default ('auto') puts
+    // page-specific CSS under 4kB in a <style> element, and its CSP hash only
+    // exists in that page's meta. The client router injects the incoming page's
+    // <style> into the *current* document, whose CSP knows nothing about that
+    // hash, so the browser blocks it: cards render without their border or
+    // image sizing until a full reload replaces the meta. External files are
+    // covered by style-src 'self' and survive a client-side navigation.
+    inlineStylesheets: 'never',
+  },
+
   vite: {
     plugins: [tailwindcss()],
     define: {
