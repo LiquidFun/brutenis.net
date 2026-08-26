@@ -2,6 +2,8 @@ import { defineCollection, z } from "astro:content";
 import { ctfLoader } from "./lib/ctf-loader";
 import { githubProfileLoader } from "./lib/github-loader";
 import { blogLoader } from "./lib/blog-loader";
+import { immichLoader } from "./lib/immich-loader";
+import { photoAlbums } from "./data/photo-albums";
 
 const blog = defineCollection({
   loader: blogLoader({
@@ -87,4 +89,32 @@ const ctf = defineCollection({
   }),
 });
 
-export const collections = { blog, projects, games, ctf };
+const renditionSchema = z.object({
+  width: z.number(),
+  height: z.number(),
+  url: z.string(),
+});
+
+const photos = defineCollection({
+  loader: immichLoader({ albums: photoAlbums }),
+  schema: z.object({
+    title: z.string(),
+    slug: z.string(),
+    description: z.string().default(""),
+    /** Position in src/data/photo-albums.ts, which is the page order. */
+    order: z.number(),
+    photos: z.array(
+      z.object({
+        id: z.string(),
+        width: z.number(),
+        height: z.number(),
+        src: z.string(),
+        renditions: z.array(renditionSchema).nonempty(),
+        full: renditionSchema,
+        alt: z.string(),
+      }),
+    ),
+  }),
+});
+
+export const collections = { blog, projects, games, ctf, photos };

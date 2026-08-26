@@ -36,6 +36,17 @@ jobs:
           key: ctf-writeups-${{ github.run_id }}
           restore-keys: ctf-writeups-
 
+      # Without this every build re-downloads every photo from Immich and
+      # re-encodes the whole WebP ladder. With it, only assets that are new or
+      # whose checksum changed are fetched, and a build that cannot reach Immich
+      # still renders /photos from the last successful run.
+      - name: Cache Immich photo renditions
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: .cache/immich
+          key: immich-photos-${{ github.run_id }}
+          restore-keys: immich-photos-
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22

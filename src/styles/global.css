@@ -40,13 +40,36 @@
     font-size: 120%;
     scroll-behavior: smooth;
     background-color: var(--color-bg-cream);
-    overflow-x: hidden;
+    /* clip, not hidden. `overflow-x: hidden` on the root makes <html> a scroll
+       container in Firefox and Safari, and a sticky descendant then sticks to
+       *it* rather than to the viewport — so the nav scrolled away in those
+       browsers while staying pinned in Chromium, which special-cases the root.
+       `clip` clips exactly the same but establishes no scroll container. */
+    overflow-x: clip;
   }
 
   body {
     font-family: var(--font-body);
     color: var(--color-text-charcoal);
     min-height: 100vh;
+    /* The nav is position:fixed and reserves no space of its own.
+       @scripts/fixed-nav overwrites this with the measured height as an inline
+       style; these are the fallback for before it runs and for no-JS, and are
+       rounded up, since over-reserving leaves a small gap while under-reserving
+       hides content behind the bar. The steps follow where the links wrap. */
+    padding-top: 11rem;
+  }
+
+  @media (min-width: 640px) {
+    body {
+      padding-top: 7.5rem;
+    }
+  }
+
+  @media (min-width: 1250px) {
+    body {
+      padding-top: 4.75rem;
+    }
   }
 
   h1, h2, h3, h4, h5, h6 {

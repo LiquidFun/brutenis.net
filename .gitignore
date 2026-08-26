@@ -26,6 +26,10 @@ ctf-writeups/
 public/ctf-assets/
 public/images/projects/
 public/images/games/
+public/photos/
+
+# downloaded + re-encoded Immich renditions, restored from cache in CI
+.cache/
 
 # macOS-specific files
 .DS_Store

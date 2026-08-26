@@ -21,6 +21,7 @@
     "astro": "^6.1.8",
     "marked": "^18.0.2",
     "remark-gfm": "^4.0.1",
+    "sharp": "^0.34.5",
     "tailwindcss": "^4.2.2"
   },
   "devDependencies": {

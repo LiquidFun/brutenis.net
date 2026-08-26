@@ -1,0 +1,337 @@
+---
+import BaseLayout from "@layouts/BaseLayout.astro";
+import { getCollection } from "astro:content";
+
+const albums = (await getCollection("photos")).sort((a, b) => a.data.order - b.data.order);
+
+// Only an upper bound: how many photos land in a row depends on their aspect
+// ratios, so the exact width is not known until the layout script runs and
+// replaces this with a precise pixel value. Deliberately generous — guessing too
+// low makes the browser commit to an under-sized rendition for the photos above
+// the fold, and it will not upgrade one it has already fetched.
+const SIZES = "(max-width: 560px) 100vw, (max-width: 2700px) 60vw, (max-width: 3600px) 40vw, 30vw";
+
+// Photos above the fold load eagerly; everything else waits for the viewport.
+const EAGER_COUNT = 4;
+let rendered = 0;
+---
+
+<BaseLayout
+  title="Photos"
+  description="Photo albums - a selection of my favourite pictures"
+  fullWidth
+>
+  <h1 class="sr-only">Photos</h1>
+
+  {
+    albums.length === 0 && (
+      <p class="font-heading text-2xl text-text-muted text-center py-16">
+        No albums right now — check back soon.
+      </p>
+    )
+  }
+
+  {
+    albums.map((album) => (
+      <section class="photo-album" data-expanded="false">
+        <h2 class="photo-album-title">{album.data.title}</h2>
+        <div class="photo-grid">
+          {album.data.photos.map((photo) => {
+            const eager = rendered++ < EAGER_COUNT;
+            return (
+              <a
+                class="photo-item"
+                href={photo.full.url}
+                data-full={photo.full.url}
+                data-full-width={photo.full.width}
+                data-full-height={photo.full.height}
+              >
+                <img
+                  src={photo.src}
+                  srcset={photo.renditions.map((r) => `${r.url} ${r.width}w`).join(", ")}
+                  sizes={SIZES}
+                  width={photo.width}
+                  height={photo.height}
+                  alt={photo.alt}
+                  loading={eager ? "eager" : "lazy"}
+                  decoding="async"
+                />
+              </a>
+            );
+          })}
+        </div>
+        <div class="photo-more photo-hidden">
+          <button type="button">Show more</button>
+        </div>
+      </section>
+    ))
+  }
+</BaseLayout>
+
+<script>
+  import { initGallery, teardownGallery } from "@scripts/photos/gallery";
+  import { initLightbox, teardownLightbox } from "@scripts/photos/lightbox";
+
+  function init() {
+    initGallery();
+    initLightbox();
+  }
+
+  document.addEventListener("astro:page-load", init);
+  // Leaving the page must drop the listeners and the open viewer; module state
+  // survives a client-side navigation, only a full load resets it.
+  document.addEventListener("astro:before-swap", () => {
+    teardownGallery();
+    teardownLightbox();
+  });
+</script>
+
+<!-- is:global is required: the lightbox is built by the script above, so its
+  elements never carry Astro's scoping attribute. The grid rules are global for
+  the same reason - the classes that drive them are toggled at runtime. -->
+<style is:global>
+  /* --- album + justified grid ------------------------------------------- */
+
+  .photo-album {
+    margin-bottom: 3rem;
+  }
+
+  /* Divider between albums, not above the first one. */
+  .photo-album + .photo-album {
+    border-top: 2px dashed rgba(99, 110, 114, 0.25);
+    padding-top: 2.5rem;
+  }
+
+  .photo-album-title {
+    font-family: "Caveat", cursive;
+    font-size: 2rem;
+    font-weight: 700;
+    color: var(--color-text-muted);
+    text-align: center;
+    margin-bottom: 0.75rem;
+  }
+
+  /* The 8px gap is duplicated as GAP in @scripts/photos/gallery.ts, which sizes
+     the rows to fill the container exactly. Keep the two in sync. */
+  .photo-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  /* Before the layout script runs: fixed-height rows with a ragged right edge,
+     derived purely from each <img>'s width/height attributes. Clipped to about
+     two rows so the page does not show every photo and then collapse. Roughly
+     the height the script settles on, to keep the handover from jumping. */
+  .photo-grid:not(.photo-grid-justified) {
+    max-height: 1128px;
+    overflow: hidden;
+  }
+
+  .photo-item {
+    display: block;
+    height: 560px;
+    overflow: hidden;
+    border-radius: 6px;
+    background: var(--color-bg-warm);
+    /* Cancels the dashed link underline from global.css. */
+    border-bottom: none;
+    cursor: zoom-in;
+    transition: transform 0.15s ease;
+  }
+
+  .photo-item img {
+    display: block;
+    height: 100%;
+    width: auto;
+  }
+
+  .photo-item:hover {
+    transform: scale(1.01);
+  }
+
+  /* Script-driven layout: the anchor gets an exact width/height, so the photo
+     fills it. */
+  .photo-grid-justified .photo-item {
+    height: auto;
+  }
+
+  .photo-grid-justified .photo-item img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+
+  /* The clipped top of the next row, above the "show more" button. The script
+     shortens the boxes but leaves the widths alone, so the row still spans the
+     container. Photos keep their colours; only the lower part fades out, so it
+     reads as the album continuing rather than as disabled content. */
+  .photo-peek {
+    /* Decorative: the button is the thing to click, and the photos are clipped
+       anyway. Also suppresses the hover transform. */
+    pointer-events: none;
+    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 40%, transparent 100%);
+    mask-image: linear-gradient(to bottom, #000 0%, #000 40%, transparent 100%);
+  }
+
+  /* Show the top of each photo rather than its middle. */
+  .photo-grid-justified .photo-peek img {
+    object-position: top;
+  }
+
+  .photo-more {
+    display: flex;
+    justify-content: center;
+    margin-top: 0.75rem;
+  }
+
+  .photo-more button {
+    font-family: "Caveat", cursive;
+    font-size: 1.25rem;
+    color: var(--color-text-charcoal);
+    background: var(--color-bg-warm);
+    border: 2px dashed var(--color-yarn-coral);
+    border-radius: 999px;
+    padding: 0.25rem 1.5rem;
+    cursor: pointer;
+    transition:
+      background 0.15s ease,
+      color 0.15s ease;
+  }
+
+  .photo-more button:hover {
+    background: var(--color-yarn-coral);
+    color: var(--color-bg-cream);
+  }
+
+  /* Toggled by both scripts to hide collapsed photos, the "show more" button and
+     the viewer's arrows. It has to come after .photo-more's display:flex — equal
+     specificity, so source order decides. */
+  .photo-hidden {
+    display: none;
+  }
+
+  /* --- lightbox --------------------------------------------------------- */
+
+  html.photo-lightbox-open,
+  html.photo-lightbox-open body {
+    overflow: hidden;
+  }
+
+  /* Above the yarn cursor canvas (z-index 9999), which would otherwise draw the
+     ball over the photo. */
+  .photo-lightbox {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    /* Almost opaque: at 0.95 the nav and album titles stayed legible through it. */
+    background: rgba(20, 18, 16, 0.985);
+  }
+
+  .photo-lightbox-closed {
+    display: none;
+  }
+
+  .photo-lightbox-stage {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    overflow: hidden;
+    /* The pointer handlers own panning and pinching. */
+    touch-action: none;
+  }
+
+  .photo-lightbox-img {
+    max-width: 100%;
+    /* Of the stage, not the viewport: 100vh overflows a mobile browser's
+       visible area once its chrome is accounted for. */
+    max-height: 100%;
+    object-fit: contain;
+    user-select: none;
+    cursor: zoom-in;
+    will-change: transform;
+  }
+
+  .photo-lightbox-img-zoomed {
+    cursor: grab;
+  }
+
+  .photo-lightbox-close,
+  .photo-lightbox-nav {
+    position: absolute;
+    font-family: "Caveat", cursive;
+    color: var(--color-bg-cream);
+    background: rgba(20, 18, 16, 0.45);
+    border: 2px dashed rgba(254, 249, 239, 0.5);
+    border-radius: 999px;
+    cursor: pointer;
+    line-height: 1;
+    transition:
+      background 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .photo-lightbox-close:hover,
+  .photo-lightbox-nav:hover {
+    background: var(--color-yarn-coral);
+    border-color: var(--color-bg-cream);
+  }
+
+  .photo-lightbox-close {
+    top: 1rem;
+    right: 1rem;
+    width: 2.75rem;
+    height: 2.75rem;
+    font-size: 2rem;
+  }
+
+  .photo-lightbox-nav {
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3.25rem;
+    height: 3.25rem;
+    font-size: 2.75rem;
+    padding-bottom: 0.35rem;
+  }
+
+  .photo-lightbox-prev {
+    left: 1rem;
+  }
+
+  .photo-lightbox-next {
+    right: 1rem;
+  }
+
+  .photo-lightbox-counter {
+    position: absolute;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    font-family: "Caveat", cursive;
+    font-size: 1.25rem;
+    color: rgba(254, 249, 239, 0.75);
+    pointer-events: none;
+  }
+
+  @media (max-width: 640px) {
+    .photo-album-title {
+      font-size: 1.6rem;
+    }
+
+    .photo-lightbox-nav {
+      width: 2.5rem;
+      height: 2.5rem;
+      font-size: 2rem;
+    }
+
+    .photo-lightbox-prev {
+      left: 0.35rem;
+    }
+
+    .photo-lightbox-next {
+      right: 0.35rem;
+    }
+  }
+</style>

@@ -6,9 +6,11 @@ interface Props {
   title: string;
   description?: string;
   noindex?: boolean;
+  /** Drops the max-w-5xl reading column so content spans the viewport (/photos). */
+  fullWidth?: boolean;
 }
 
-const { title, description = "Brutenis's personal website - a yarn-tangled corner of the internet", noindex = false } = Astro.props;
+const { title, description = "Brutenis's personal website - a yarn-tangled corner of the internet", noindex = false, fullWidth = false } = Astro.props;
 const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 ---
 
@@ -80,7 +82,21 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
       </div>
     </div>
 
-    <nav class="sticky top-0 z-50 bg-bg-cream/90 backdrop-blur-sm border-b-2 border-dashed border-yarn-coral/30">
+    <!--
+      position:fixed, not sticky. Sticky is only pinned while no ancestor is a
+      scroll container, and `overflow-x` on <html> or <body> silently makes one
+      in some browsers — the bar then scrolls with the page. Fixed is anchored to
+      the viewport regardless, so it cannot regress that way.
+
+      Because it is out of flow it reserves no space: @scripts/fixed-nav keeps
+      body's padding-top equal to its measured height, which changes whenever the
+      links wrap onto another row.
+
+      Opaque, not bg-bg-cream/90 + backdrop-blur: at 90% the content scrolling
+      behind showed through, which also read as the bar moving. Most visible on
+      /photos, where a full-bleed photo tinted the whole bar.
+    -->
+    <nav class="fixed top-0 inset-x-0 z-50 bg-bg-cream border-b-2 border-dashed border-yarn-coral/30">
       <div class="max-w-5xl mx-auto px-4 py-1 flex flex-col items-center sm:flex-row sm:items-center sm:justify-between gap-0 sm:gap-0 sm:py-3">
         <a href="/" class="logo-link" id="animated-logo" transition:persist="animated-logo">
           brutenis.net
@@ -90,6 +106,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
             { href: "/blog", label: "Blog" },
             { href: "/projects", label: "Projects" },
             { href: "/games", label: "Games" },
+            { href: "/photos", label: "Photos" },
             { href: "/ctf", label: "CTF" },
             { href: "/leaderboard", label: "Leaderboard" },
             { href: "/about", label: "About" },
@@ -100,7 +117,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
       </div>
     </nav>
 
-    <main class="flex-1 max-w-5xl mx-auto px-4 py-8 w-full">
+    <main class:list={["flex-1 w-full mx-auto", fullWidth ? "px-2 sm:px-3 py-4" : "max-w-5xl px-4 py-8"]}>
       <slot />
     </main>
 
@@ -120,6 +137,11 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
       import "@scripts/yarn-game/index";
       import "@scripts/animated-logo";
       import "@scripts/clickable-cards";
+      import { initFixedNav, teardownFixedNav } from "@scripts/fixed-nav";
+
+      initFixedNav();
+      document.addEventListener("astro:page-load", initFixedNav);
+      document.addEventListener("astro:before-swap", teardownFixedNav);
     </script>
   </body>
 </html>
@@ -328,12 +350,17 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     }
   }
 
-  /* Under ~1150px the nav row cannot fit the logo, the links, the "Disable Game"
+  /* Under ~1250px the nav row cannot fit the logo, the links, the "Disable Game"
      hint and the score at once, and the button would drop onto a second line
      mid-game. Drop the hint (the × and the tooltip still say what a click does)
-     and the row survives down to 1024. !important because the game script sets
-     these spans' display inline. */
-  @media (hover: hover) and (pointer: fine) and (max-width: 1150px) {
+     and the row survives down to ~1100. !important because the game script sets
+     these spans' display inline.
+
+     The threshold was 1150px while there were six links; the "Photos" tab needs
+     the extra ~100px, otherwise the links wrap between 1150 and 1210. Between
+     1024 and 1100 seven links no longer fit on one row and the list wraps — the
+     button still has its own space, so nothing overlaps. */
+  @media (hover: hover) and (pointer: fine) and (max-width: 1250px) {
     .game-hud .hud-label,
     .game-hud .hud-separator {
       display: none !important;
