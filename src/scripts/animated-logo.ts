@@ -94,6 +94,8 @@ function drawLogo() {
 let timerId: ReturnType<typeof setTimeout> | null = null;
 
 function scheduleRedraw() {
+  // Cancel any pending redraw so re-init never leaves a second timer chain running
+  if (timerId) clearTimeout(timerId);
   timerId = setTimeout(() => {
     if (!ctx || !canvas) return;
     generateWobble();

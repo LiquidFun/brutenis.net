@@ -361,7 +361,8 @@ function initScoreSubmitUI() {
         session, name, monsters.score, monsters.level, durationMs, tracker.getAll(),
       );
       if (result.rank && rankEl) {
-        rankEl.innerHTML = `You placed #${result.rank}! <a href="/leaderboard" class="submit-rank-link">View Leaderboard</a>`;
+        // data-astro-reload: full page load so the game state resets, like "Try Again"
+        rankEl.innerHTML = `You placed #${result.rank}! <a href="/leaderboard" class="submit-rank-link" data-astro-reload>View Leaderboard</a>`;
         rankEl.style.display = "";
         sessionStorage.setItem("lastSubmittedRank", String(result.rank));
       } else if (!result.accepted && rankEl) {

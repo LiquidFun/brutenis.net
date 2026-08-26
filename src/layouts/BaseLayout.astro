@@ -73,7 +73,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 
     <nav class="sticky top-0 z-50 bg-bg-cream/90 backdrop-blur-sm border-b-2 border-dashed border-yarn-coral/30">
       <div class="max-w-5xl mx-auto px-4 py-1 flex flex-col items-center sm:flex-row sm:items-center sm:justify-between gap-0 sm:gap-0 sm:py-3">
-        <a href="/" class="logo-link" id="animated-logo">
+        <a href="/" class="logo-link" id="animated-logo" transition:persist="animated-logo">
           brutenis.net
         </a>
         <div class="flex gap-0 sm:gap-1 items-center flex-wrap justify-center sm:justify-start">

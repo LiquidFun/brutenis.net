@@ -46,6 +46,11 @@ import BaseLayout from "@layouts/BaseLayout.astro";
     replay_events: number;
   }
 
+  // The API rejects requests without this. A cross-site form cannot set a
+  // header, and a cross-origin fetch that does gets preflighted and refused,
+  // so it confines the admin API to calls made from this page.
+  const ADMIN_HEADERS = { "X-Admin-Request": "1" };
+
   function formatDuration(seconds: number): string {
     const m = Math.floor(seconds / 60);
     const s = Math.round(seconds % 60);
@@ -69,7 +74,9 @@ import BaseLayout from "@layouts/BaseLayout.astro";
   }
 
   async function fetchReplay(sessionId: string): Promise<ReplayEvent[]> {
-    const resp = await fetch(`/admin/api/sessions/${sessionId}/replay`);
+    const resp = await fetch(`/admin/api/sessions/${sessionId}/replay`, {
+      headers: ADMIN_HEADERS,
+    });
     if (!resp.ok) throw new Error(`Replay failed: ${resp.status}`);
     return (await resp.json()).events as ReplayEvent[];
   }
@@ -123,7 +130,7 @@ import BaseLayout from "@layouts/BaseLayout.astro";
   async function setValidity(sessionId: string, isValid: boolean, reason: string) {
     const resp = await fetch(`/admin/api/sessions/${sessionId}/validity`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { ...ADMIN_HEADERS, "Content-Type": "application/json" },
       body: JSON.stringify({ is_valid: isValid, reason }),
     });
     if (!resp.ok) throw new Error(`Update failed: ${resp.status}`);
@@ -231,7 +238,7 @@ import BaseLayout from "@layouts/BaseLayout.astro";
     if (!tbody) return;
 
     try {
-      const resp = await fetch("/admin/api/sessions");
+      const resp = await fetch("/admin/api/sessions", { headers: ADMIN_HEADERS });
       if (!resp.ok) throw new Error(`Fetch failed: ${resp.status}`);
       const data = (await resp.json()) as { sessions: AdminSession[]; total: number };
 

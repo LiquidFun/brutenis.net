@@ -93,9 +93,15 @@ import BaseLayout from "@layouts/BaseLayout.astro";
           <td class="lb-score font-mono">${entry.score.toLocaleString()}</td>
           <td class="lb-level font-mono">${entry.level}</td>
           <td class="lb-duration font-mono">${formatDuration(entry.duration_s)}</td>
-          <td class="lb-info" title="${entry.weapon}"><span class="lb-platform-icon">${platformIcon}</span>${platformLabel}</td>
+          <td class="lb-info"><span class="lb-platform-icon">${platformIcon}</span>${platformLabel}</td>
           <td class="lb-date font-mono">${formatDate(entry.date)}</td>
         `;
+        // Set as a property, not interpolated into the template above: `weapon`
+        // is attacker-controlled, and escapeHtml() does not escape quotes, so it
+        // is not safe for an attribute value.
+        const info = tr.querySelector<HTMLElement>(".lb-info");
+        if (info) info.title = entry.weapon;
+
         tbody.appendChild(tr);
       }
 
