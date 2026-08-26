@@ -22,6 +22,7 @@ const rest = projects.filter((p) => !p.data.featured);
         slug={project.id}
         basePath="/projects"
         links={project.data.links}
+        stars={project.data.stars}
         thumbnail={project.data.thumbnail}
       />
     ))}

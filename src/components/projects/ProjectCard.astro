@@ -1,5 +1,7 @@
 ---
-import { getTagColor } from "@lib/tag-colors";
+import { getTagColorClass, yarnColorClass } from "@lib/tag-colors";
+import { safeUrl } from "@lib/safe-url";
+import StarCount from "@components/StarCount.astro";
 
 interface Props {
   title: string;
@@ -9,21 +11,27 @@ interface Props {
   slug: string;
   basePath: string;
   thumbnail?: string;
+  stars?: number;
   links?: { github?: string; live?: string; play?: string; itch?: string; docs?: string };
 }
 
-const { title, description, date, tags, slug, basePath, thumbnail, links = {} } = Astro.props;
+const { title, description, date, tags, slug, basePath, thumbnail, stars, links = {} } = Astro.props;
 
 const formattedDate = date.toLocaleDateString("en-US", {
   year: "numeric",
   month: "short",
 });
 
-const borderColor = tags.length > 0 ? getTagColor(tags[0]) : "var(--color-yarn-purple)";
-const linkEntries = Object.entries(links).filter(([, v]) => v);
+const colorClass = tags.length > 0 ? getTagColorClass(tags[0]) : yarnColorClass("purple");
+// These hrefs come from the profile README fetched at build time, so they are
+// filtered to http(s) rather than trusted. A link whose URL does not survive is
+// dropped instead of rendered dead.
+const linkEntries = Object.entries(links)
+  .map(([name, url]) => [name, safeUrl(url)] as const)
+  .filter((entry): entry is readonly [string, string] => Boolean(entry[1]));
 ---
 
-<article class="project-card clickable-card" style={`--card-color: ${borderColor}; cursor: pointer`}>
+<article class:list={["project-card", "clickable-card", colorClass]}>
   <div class="project-card-inner">
     <div class="project-card-content">
       <a href={`${basePath}/${slug}`} class="card-main-link mb-2">
@@ -42,7 +50,7 @@ const linkEntries = Object.entries(links).filter(([, v]) => v);
               rel="noopener noreferrer"
               class="hover:text-yarn-coral transition-colors card-extra-links"
             >
-              {name}
+              {name}{name === "github" && <> <StarCount stars={stars} /></>}
             </a>
           </Fragment>
         ))}
@@ -60,7 +68,7 @@ const linkEntries = Object.entries(links).filter(([, v]) => v);
 <style>
   .project-card {
     padding: 1.25rem;
-    border: 2px dashed var(--card-color);
+    border: 2px dashed var(--yarn-color);
     border-radius: 0.75rem;
     transition: all 0.2s;
     background: white;

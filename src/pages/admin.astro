@@ -11,7 +11,7 @@ import BaseLayout from "@layouts/BaseLayout.astro";
 
   <p id="admin-status" class="font-heading text-xl text-text-muted">Loading runs...</p>
 
-  <div id="admin-table-wrap" class="admin-table-wrap" style="display:none">
+  <div id="admin-table-wrap" class="admin-table-wrap start-hidden">
     <table class="admin-table">
       <thead>
         <tr>
@@ -255,7 +255,9 @@ import BaseLayout from "@layouts/BaseLayout.astro";
       }
 
       setStatus("");
-      if (wrap) wrap.style.display = "";
+      // Explicit value, not "": #admin-table-wrap starts hidden via
+      // .start-hidden, and "" would clear the inline style and re-hide it.
+      if (wrap) wrap.style.display = "block";
     } catch {
       setStatus("Failed to load runs.");
     }

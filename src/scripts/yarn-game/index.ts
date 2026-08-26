@@ -179,13 +179,15 @@ function updateHUD() {
     if (scoreWrap) scoreWrap.style.display = "none";
   } else if (s < 5) {
     if (disableLabel) disableLabel.style.display = "";
-    if (separator) separator.style.display = "";
-    if (scoreWrap) scoreWrap.style.display = "";
+    // "inline", not "": both are spans that start hidden via
+    // .start-hidden, so "" would fall back to that rule.
+    if (separator) separator.style.display = "inline";
+    if (scoreWrap) scoreWrap.style.display = "inline";
     if (scoreEl) scoreEl.textContent = String(s);
   } else {
     if (disableLabel) disableLabel.style.display = "none";
     if (separator) separator.style.display = "none";
-    if (scoreWrap) scoreWrap.style.display = "";
+    if (scoreWrap) scoreWrap.style.display = "inline";
     if (scoreEl) {
       const lvl = monsters.level > 1 ? ` (Lvl ${monsters.level})` : "";
       scoreEl.textContent = `${s}${lvl}`;
@@ -363,11 +365,11 @@ function initScoreSubmitUI() {
       if (result.rank && rankEl) {
         // data-astro-reload: full page load so the game state resets, like "Try Again"
         rankEl.innerHTML = `You placed #${result.rank}! <a href="/leaderboard" class="submit-rank-link" data-astro-reload>View Leaderboard</a>`;
-        rankEl.style.display = "";
+        rankEl.style.display = "block";
         sessionStorage.setItem("lastSubmittedRank", String(result.rank));
       } else if (!result.accepted && rankEl) {
         rankEl.textContent = "Score recorded, but flagged as implausible.";
-        rankEl.style.display = "";
+        rankEl.style.display = "block";
       }
       btn.textContent = "Submitted!";
       // Clear session so next game gets a fresh one
@@ -400,6 +402,18 @@ function initOverlayButtons() {
   }
 }
 
+const CONFIRM_UNLOAD_LEVEL = 5;
+
+// Guard against losing a serious run to an accidental refresh / tab close.
+// Astro's client router navigations don't fire this, so in-site links stay instant.
+function onBeforeUnload(e: BeforeUnloadEvent) {
+  if (!monsters || monsters.gameOver) return;
+  if (monsters.level < CONFIRM_UNLOAD_LEVEL) return;
+  if (!areAttackersEnabled()) return;
+  e.preventDefault();
+  e.returnValue = "";
+}
+
 function init() {
   if (initialized) return;
 
@@ -429,6 +443,7 @@ function init() {
   (window as any).__upgradeDamageMultiplier = () => upgrades!.getDamageMultiplier();
 
   window.addEventListener("resize", resize);
+  window.addEventListener("beforeunload", onBeforeUnload);
 
   lastTime = performance.now();
   animId = requestAnimationFrame(animate);
@@ -438,7 +453,7 @@ function init() {
 // ── Cheat panel (dev only) ──
 
 function initCheatPanel() {
-  if (location.hostname !== "10.0.0.2") return;
+  if (location.hostname !== "10.0.24.2") return;
   if (document.getElementById("cheat-panel")) return;
 
   const panel = document.createElement("div");

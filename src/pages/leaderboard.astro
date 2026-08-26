@@ -12,7 +12,7 @@ import BaseLayout from "@layouts/BaseLayout.astro";
   <div id="leaderboard-container">
     <p id="leaderboard-loading" class="font-heading text-xl text-text-muted">Loading scores...</p>
 
-    <div id="leaderboard-table-wrap" class="leaderboard-table-wrap" style="display:none">
+    <div id="leaderboard-table-wrap" class="leaderboard-table-wrap start-hidden">
       <table class="leaderboard-table">
         <thead>
           <tr>
@@ -106,7 +106,8 @@ import BaseLayout from "@layouts/BaseLayout.astro";
       }
 
       if (loading) loading.style.display = "none";
-      if (tableWrap) tableWrap.style.display = "";
+      // Explicit value, not "": the wrap starts hidden via .start-hidden.
+      if (tableWrap) tableWrap.style.display = "block";
     } catch {
       if (loading) {
         loading.textContent =

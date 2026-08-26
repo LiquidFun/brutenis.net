@@ -265,3 +265,48 @@
 .card-hp-indicator.hp-high { color: #55efc4; }
 .card-hp-indicator.hp-mid { color: #fdcb6e; }
 .card-hp-indicator.hp-low { color: #ff7675; }
+
+/* Initial "hidden" state for elements that scripts reveal later.
+ *
+ * This used to be `style="display:none"` in the markup, which the CSP forbids:
+ * a hash can cover a <style> element but not a style attribute, and allowing
+ * style attributes needs 'unsafe-inline', which would be ignored anyway once
+ * any hash is present. Setting `.style.display` from JS is unaffected by CSP,
+ * so only the markup form had to move.
+ *
+ * The class is repeated three times to reach specificity 0-3-0. Two was not
+ * enough: Astro scopes a component's own rule to
+ * `.game-over-overlay[data-astro-cid-xxx]`, which is also 0-2-0, and it is
+ * emitted after this file — so `display: flex` won the tie and the Game Over
+ * overlay was visible on every page load. 0-3-0 beats every scoped
+ * single-class rule regardless of emission order.
+ *
+ * No !important: an important author declaration would outrank the inline style
+ * the scripts set to *show* these elements, which is the one thing that must
+ * still win.
+ *
+ * Because of that, a script showing one of these must set an explicit value —
+ * `el.style.display = "flex"` — and not `""`, which clears the inline
+ * declaration and falls back to this rule.
+ */
+.start-hidden.start-hidden.start-hidden {
+  display: none;
+}
+
+/* Per-item accent colour, as classes rather than `style="--card-color: ..."`.
+ * See src/lib/tag-colors.ts: style attributes in markup are blocked by the CSP,
+ * and the yarn palette is a fixed set, so the colour can travel as a class.
+ */
+.yarn-color-coral  { --yarn-color: var(--color-yarn-coral); }
+.yarn-color-teal   { --yarn-color: var(--color-yarn-teal); }
+.yarn-color-yellow { --yarn-color: var(--color-yarn-yellow); }
+.yarn-color-purple { --yarn-color: var(--color-yarn-purple); }
+.yarn-color-pink   { --yarn-color: var(--color-yarn-pink); }
+.yarn-color-blue   { --yarn-color: var(--color-yarn-blue); }
+.yarn-color-green  { --yarn-color: var(--color-yarn-green); }
+.yarn-color-orange { --yarn-color: var(--color-yarn-orange); }
+
+/* Was `cursor: pointer` in the same inline style as --card-color. */
+.clickable-card {
+  cursor: pointer;
+}

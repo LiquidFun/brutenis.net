@@ -2,7 +2,7 @@ import type { Loader } from "astro/loaders";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { join, basename } from "node:path";
 import { parseFrontmatter } from "@astrojs/markdown-remark";
-import { fetchReadme, fetchRepoMeta, slugify } from "./github-loader";
+import { fetchReadme, fetchRepoMeta, firstImage, slugify } from "./github-loader";
 
 interface GithubBlogEntry {
   repo: string;
@@ -10,6 +10,8 @@ interface GithubBlogEntry {
   description?: string;
   tags?: string[];
   pubDate?: string;
+  /** Card image on the blog listing. Defaults to the first image in the README. */
+  heroImage?: string;
 }
 
 export function blogLoader(options: {
@@ -76,8 +78,10 @@ export function blogLoader(options: {
             description,
             pubDate,
             tags,
+            heroImage: entry.heroImage || firstImage(readmeContent.body),
             source: "github",
             githubUrl: `https://github.com/${entry.repo}`,
+            stars: repoMeta.stars,
             draft: false,
           },
         });

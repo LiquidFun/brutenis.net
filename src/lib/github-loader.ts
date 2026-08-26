@@ -1,6 +1,6 @@
 import type { Loader } from "astro/loaders";
 import { marked } from "marked";
-import { mkdirSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join, basename } from "node:path";
 
 const PROFILE_README_URL =
@@ -71,6 +71,14 @@ function blobToRaw(url: string): string {
   return url
     .replace("github.com", "raw.githubusercontent.com")
     .replace("/blob/", "/");
+}
+
+/** First image URL in a processed README body (markdown or <img>), if any */
+export function firstImage(body: string): string | undefined {
+  const md = body.match(/!\[[^\]]*\]\((https?:\/\/[^)\s]+)\)/);
+  if (md) return md[1];
+  const html = body.match(/<img[^>]+src="(https?:\/\/[^"]+)"/i);
+  return html?.[1];
 }
 
 /** Slugify a title into a URL-safe id */
@@ -149,7 +157,17 @@ async function downloadImage(
 ): Promise<string | undefined> {
   try {
     const rawUrl = blobToRaw(imgUrl);
-    const filename = decodeURIComponent(basename(new URL(rawUrl).pathname));
+    // basename() before decodeURIComponent() was the wrong way round: a URL
+    // ending in "%2e%2e%2fetc%2fpasswd" survives basename intact and only
+    // becomes "../etc/passwd" after decoding, so writeFileSync escaped public/.
+    // Decode first, then take the basename of the decoded value, then check
+    // that nothing path-like is left.
+    const decoded = decodeURIComponent(new URL(rawUrl).pathname);
+    const filename = basename(decoded);
+    if (!filename || filename === "." || filename === ".." || filename.includes("/")) {
+      logger.warn(`Skipping image with a suspicious filename: ${rawUrl}`);
+      return undefined;
+    }
     const localPath = join(dir, filename);
     // Strip "public/" prefix for the web-serving path
     const publicPath = "/" + dir.replace(/^public\//, "") + "/" + filename;
@@ -172,23 +190,71 @@ async function downloadImage(
   }
 }
 
-/** Fetch repo metadata (description, language, created_at) from GitHub API */
-export async function fetchRepoMeta(repo: string): Promise<{
+/**
+ * Unauthenticated api.github.com allows 60 requests/hour per IP, and a build
+ * spends ~15 of them. Setting GITHUB_TOKEN (CI provides one automatically)
+ * raises that to 5000 and keeps star counts from silently falling back to 0.
+ */
+function apiHeaders(): HeadersInit {
+  const token = process.env.GITHUB_TOKEN;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
+interface RepoMeta {
   description: string;
   language: string;
   createdAt: string;
-}> {
+  stars: number;
+}
+
+// Last successful response per repo, so a rate-limited or offline build keeps
+// showing the previous star counts and descriptions instead of blanking them.
+// .astro/ is gitignored and rebuilt freely; a missing cache just means one
+// unlucky build renders no stars.
+const META_CACHE_FILE = "./.astro/github-meta.json";
+let metaCache: Record<string, RepoMeta> | null = null;
+
+function readMetaCache(): Record<string, RepoMeta> {
+  if (metaCache) return metaCache;
   try {
-    const resp = await fetch(`https://api.github.com/repos/${repo}`);
-    if (!resp.ok) return { description: "", language: "", createdAt: "2020-01-01" };
+    metaCache = JSON.parse(readFileSync(META_CACHE_FILE, "utf-8"));
+  } catch {
+    metaCache = {};
+  }
+  return metaCache!;
+}
+
+function writeMetaCache(repo: string, meta: RepoMeta) {
+  const cache = readMetaCache();
+  cache[repo] = meta;
+  try {
+    mkdirSync("./.astro", { recursive: true });
+    writeFileSync(META_CACHE_FILE, JSON.stringify(cache, null, 2));
+  } catch {
+    // A read-only or missing cache dir is not worth failing the build over
+  }
+}
+
+/** Fetch repo metadata (description, language, created_at, stars) from GitHub API */
+export async function fetchRepoMeta(repo: string): Promise<RepoMeta> {
+  const fallback = readMetaCache()[repo] ??
+    { description: "", language: "", createdAt: "2020-01-01", stars: 0 };
+  try {
+    const resp = await fetch(`https://api.github.com/repos/${repo}`, {
+      headers: apiHeaders(),
+    });
+    if (!resp.ok) return fallback;
     const data = await resp.json();
-    return {
+    const meta: RepoMeta = {
       description: data.description || "",
       language: (data.language || "").toLowerCase(),
       createdAt: data.created_at || "2020-01-01",
+      stars: data.stargazers_count || 0,
     };
+    writeMetaCache(repo, meta);
+    return meta;
   } catch {
-    return { description: "", language: "", createdAt: "2020-01-01" };
+    return fallback;
   }
 }
 
@@ -235,7 +301,7 @@ export function githubProfileLoader(options: {
 
         // Fetch repo README if it's a github link
         let readmeContent = { body: "", html: "" };
-        let repoMeta = { description: "", language: "", createdAt: "2020-01-01" };
+        let repoMeta = { description: "", language: "", createdAt: "2020-01-01", stars: 0 };
 
         if (entry.repo) {
           [readmeContent, repoMeta] = await Promise.all([
@@ -285,6 +351,7 @@ export function githubProfileLoader(options: {
             tags,
             thumbnail,
             links,
+            stars: repoMeta.stars,
             media: [],
             featured: false,
           },

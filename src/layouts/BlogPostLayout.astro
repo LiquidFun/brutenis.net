@@ -1,6 +1,7 @@
 ---
 import BaseLayout from "./BaseLayout.astro";
 import TagPill from "@components/blog/TagPill.astro";
+import StarCount from "@components/StarCount.astro";
 
 interface Props {
   title: string;
@@ -9,9 +10,10 @@ interface Props {
   updatedDate?: Date;
   tags: string[];
   githubUrl?: string;
+  stars?: number;
 }
 
-const { title, description, pubDate, updatedDate, tags, githubUrl } = Astro.props;
+const { title, description, pubDate, updatedDate, tags, githubUrl, stars } = Astro.props;
 
 const formattedDate = pubDate.toLocaleDateString("en-US", {
   year: "numeric",
@@ -44,7 +46,7 @@ const formattedUpdate = updatedDate?.toLocaleDateString("en-US", {
             rel="noopener noreferrer"
             class="hover:text-yarn-coral transition-colors"
           >
-            GitHub
+            GitHub <StarCount stars={stars} />
           </a>
         )}
       </div>

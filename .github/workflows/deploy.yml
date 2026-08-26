@@ -4,6 +4,18 @@ on:
   push:
     branches: [main, upgrades]
 
+concurrency:
+  # Two deploys rsyncing into the same directory would interleave file writes,
+  # and --delete makes that worse than a partial update. Per ref, so a push to
+  # `upgrades` does not queue behind one to `main`.
+  group: deploy-brutenis-site-${{ github.ref_name }}
+  cancel-in-progress: false
+
+# The job needs nothing from the GITHUB_TOKEN but reading the repo. Without an
+# explicit block it inherits the repository default, which may include writes.
+permissions:
+  contents: read
+
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
@@ -11,32 +23,67 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Actions are pinned to commit SHAs rather than tags. A tag is a mutable
+      # ref, and this job holds a key with write access to the served site.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          fetch-depth: 0  # full history for git describe (game version)
+          fetch-depth: 0 # full history for git describe (game version)
 
       - name: Cache CTF writeups
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ctf-writeups
           key: ctf-writeups-${{ github.run_id }}
           restore-keys: ctf-writeups-
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
 
       - run: npm ci
 
+      # GITHUB_TOKEN only lifts api.github.com from 60 to 5000 requests/hour for
+      # the repo metadata the build fetches; without it star counts and repo
+      # descriptions silently fall back to empty on a rate-limited runner.
       - run: npm run build
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # rsync/ssh directly instead of a third-party action. The previous
+      # burnett01/rsync-deployments@7.0.1 was pinned to a tag, so whoever
+      # controls that repository could retarget it and collect DEPLOY_SSH_KEY,
+      # which can rewrite everything served at brutenis.net.
+      #
+      # The host key is pinned rather than accepted on sight: ssh-keyscan trusts
+      # whatever answers, so a MITM on the runner's first connection would
+      # collect the key. Generate the secret with:
+      #   ssh-keyscan -t ed25519 brutenis.net
+      - name: Set up SSH
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "${{ secrets.DEPLOY_SSH_KEY }}" > ~/.ssh/id_ed25519
+          printf '%s\n' "${{ secrets.DEPLOY_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+          chmod 700 ~/.ssh
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          printf 'Host *\n  StrictHostKeyChecking yes\n' > ~/.ssh/config
+          if ! grep -q . ~/.ssh/known_hosts; then
+            echo "DEPLOY_KNOWN_HOSTS is empty. Set it to the output of:" >&2
+            echo "  ssh-keyscan -t ed25519 ${{ secrets.HETZNER_HOST }}" >&2
+            exit 1
+          fi
+
+      # dist/ is the whole served tree, so --delete is what removes pages that
+      # no longer exist. The trailing slash on the source matters: without it
+      # rsync would create dist/ inside the remote path.
       - name: Deploy via rsync
-        uses: burnett01/rsync-deployments@7.0.1
-        with:
-          switches: -avz --delete
-          path: dist/
-          remote_path: ${{ github.ref_name == 'main' && secrets.DEPLOY_PATH || secrets.DEPLOY_PATH_STAGING }}
-          remote_host: ${{ secrets.HETZNER_HOST }}
-          remote_user: ${{ secrets.HETZNER_USER }}
-          remote_key: ${{ secrets.DEPLOY_SSH_KEY }}
+        env:
+          REMOTE_PATH: ${{ github.ref_name == 'main' && secrets.DEPLOY_PATH || secrets.DEPLOY_PATH_STAGING }}
+        run: |
+          if [ -z "$REMOTE_PATH" ]; then
+            echo "No remote path configured for ref '${{ github.ref_name }}'." >&2
+            exit 1
+          fi
+          rsync -avz --delete \
+            dist/ \
+            "${{ secrets.HETZNER_USER }}@${{ secrets.HETZNER_HOST }}:$REMOTE_PATH/"

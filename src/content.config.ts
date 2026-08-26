@@ -23,6 +23,7 @@ const blog = defineCollection({
     draft: z.boolean().default(false),
     source: z.enum(["local", "github"]).default("local"),
     githubUrl: z.string().optional(),
+    stars: z.number().optional(),
   }),
 });
 
@@ -53,6 +54,7 @@ const projectGameSchema = z.object({
   date: z.coerce.date(),
   tags: z.array(z.string()).default([]),
   thumbnail: z.string().optional(),
+  stars: z.number().optional(),
   links: linksSchema,
   media: mediaSchema,
   featured: z.boolean().default(false),

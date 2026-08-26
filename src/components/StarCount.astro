@@ -1,0 +1,28 @@
+---
+interface Props {
+  stars?: number;
+}
+
+const { stars } = Astro.props;
+
+/** 1234 -> "1.2k", 12345 -> "12k" */
+function format(n: number): string {
+  if (n < 1000) return String(n);
+  const k = n / 1000;
+  return `${k < 10 ? k.toFixed(1).replace(/\.0$/, "") : Math.round(k)}k`;
+}
+---
+
+{stars ? (
+  <span class="star-count" title={`${stars.toLocaleString("en-US")} stars on GitHub`}>
+    &#9733; {format(stars)}
+  </span>
+) : null}
+
+<style>
+  /* Inherits the colour of the surrounding meta row / link (the palette yellow is
+     unreadable on the cream background), so it also follows the link hover state. */
+  .star-count {
+    white-space: nowrap;
+  }
+</style>
