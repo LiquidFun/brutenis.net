@@ -49,20 +49,42 @@ function generateWobble() {
   currentColor = YARN_COLORS[Math.floor(Math.random() * YARN_COLORS.length)];
 }
 
+/**
+ * Baseline that puts the *visible ink* of `TEXT` in the middle of the canvas.
+ *
+ * textBaseline "middle" centres the font's em box instead, which is not the same
+ * thing and was leaving the logo 9px high in a 53px canvas: "brutenis.net" has no
+ * descenders, so all of its ink sits above the baseline, while the font reserves
+ * room below for ones that never appear. Kalam makes this stark — it is
+ * Devanagari-capable, so it declares 32px of ascent and 25px of descent at this
+ * size, a 57px em box in a 53px canvas.
+ *
+ * Measuring the actual glyph box keeps this correct for any font or wording.
+ */
+function inkCentredBaseline(context: CanvasRenderingContext2D, height: number): number {
+  const m = context.measureText(TEXT);
+  if (m.actualBoundingBoxAscent === undefined || m.actualBoundingBoxDescent === undefined) {
+    return height / 2;
+  }
+  return height / 2 + (m.actualBoundingBoxAscent - m.actualBoundingBoxDescent) / 2;
+}
+
 function drawLogo() {
   if (!ctx || !canvas) return;
 
   ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  // Font first: everything below measures text, and measureText answers for
+  // whatever font is currently set.
+  ctx.font = `bold ${FONT_SIZE}px ${CANVAS_HEADING_FONT}`;
+  ctx.textBaseline = "alphabetic";
 
   const totalWidth = letterWobbles.length > 0
     ? letterWobbles[letterWobbles.length - 1].baseX + ctx.measureText(TEXT[TEXT.length - 1]).width
     : 0;
   const isMobile = window.matchMedia("(max-width: 639px)").matches;
   const startX = isMobile ? (canvas.width - totalWidth) / 2 : 4;
-  const y = canvas.height / 2;
-
-  ctx.font = `bold ${FONT_SIZE}px ${CANVAS_HEADING_FONT}`;
-  ctx.textBaseline = "middle";
+  const y = inkCentredBaseline(ctx, canvas.height);
 
   for (let i = 0; i < TEXT.length; i++) {
     const lw = letterWobbles[i];

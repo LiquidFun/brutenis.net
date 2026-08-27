@@ -1,5 +1,5 @@
 /**
- * Full-screen photo viewer for /photos: arrow navigation, wheel/pinch zoom,
+ * Full-screen photo viewer for /photography: arrow navigation, wheel/pinch zoom,
  * drag to pan, swipe to change photo.
  *
  * The overlay is built in script rather than in the page markup because the CSP
@@ -23,6 +23,11 @@ interface Slide {
   alt: string;
   width: number;
   height: number;
+  /** Album this photo belongs to, for the caption. */
+  album: string;
+  /** 1-based position within that album, and the album's size. */
+  positionInAlbum: number;
+  albumSize: number;
 }
 
 interface Lightbox {
@@ -243,7 +248,10 @@ function show(next: number): void {
   ui.img.alt = slide.alt;
   ui.img.width = slide.width;
   ui.img.height = slide.height;
-  ui.counter.textContent = `${index + 1} / ${slides.length}`;
+  // Named album plus the position inside it, rather than a page-wide count:
+  // arrows run across album boundaries, so this is what says where you are and
+  // makes crossing into the next album legible instead of abrupt.
+  ui.counter.textContent = `${slide.album} · ${slide.positionInAlbum} / ${slide.albumSize}`;
   const single = slides.length < 2;
   ui.prev.classList.toggle("photo-hidden", single);
   ui.next.classList.toggle("photo-hidden", single);
@@ -281,15 +289,36 @@ function onKeyDown(e: KeyboardEvent): void {
   e.preventDefault();
 }
 
-function openLightbox(album: HTMLElement, start: number): void {
-  ui ??= build();
+/**
+ * Every photo on the page, in document order, flattened across albums.
+ *
+ * The list deliberately spans albums: arrowing past the last photo of one album
+ * continues into the first of the next, rather than looping back to where you
+ * started. Only the very end of the last album wraps round to the beginning.
+ */
+function collectSlides(): Slide[] {
+  const all: Slide[] = [];
+  for (const album of document.querySelectorAll<HTMLElement>(".photo-album")) {
+    const name = album.dataset.albumTitle ?? "";
+    const items = [...album.querySelectorAll<HTMLElement>(".photo-item")];
+    items.forEach((el, i) => {
+      all.push({
+        src: el.dataset.full ?? "",
+        alt: el.querySelector("img")?.alt ?? "",
+        width: Number(el.dataset.fullWidth) || 0,
+        height: Number(el.dataset.fullHeight) || 0,
+        album: name,
+        positionInAlbum: i + 1,
+        albumSize: items.length,
+      });
+    });
+  }
+  return all;
+}
 
-  slides = [...album.querySelectorAll<HTMLElement>(".photo-item")].map((el) => ({
-    src: el.dataset.full ?? "",
-    alt: el.querySelector("img")?.alt ?? "",
-    width: Number(el.dataset.fullWidth) || 0,
-    height: Number(el.dataset.fullHeight) || 0,
-  }));
+function openLightbox(start: number): void {
+  ui ??= build();
+  slides = collectSlides();
 
   ui.root.classList.remove("photo-lightbox-closed");
   document.documentElement.classList.add("photo-lightbox-open");
@@ -309,19 +338,19 @@ export function closeLightbox(): void {
 export function initLightbox(): void {
   teardownLightbox();
 
-  for (const album of document.querySelectorAll<HTMLElement>(".photo-album")) {
-    const items = [...album.querySelectorAll<HTMLElement>(".photo-item")];
-    items.forEach((item, i) => {
-      const onClick = (e: MouseEvent) => {
-        // Let modified clicks open the rendition in a new tab as usual.
-        if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
-        e.preventDefault();
-        openLightbox(album, i);
-      };
-      item.addEventListener("click", onClick);
-      cleanups.push(() => item.removeEventListener("click", onClick));
-    });
-  }
+  // One page-wide index, so the viewer opens at the right photo in a list that
+  // already spans every album.
+  const items = [...document.querySelectorAll<HTMLElement>(".photo-album .photo-item")];
+  items.forEach((item, i) => {
+    const onClick = (e: MouseEvent) => {
+      // Let modified clicks open the rendition in a new tab as usual.
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+      e.preventDefault();
+      openLightbox(i);
+    };
+    item.addEventListener("click", onClick);
+    cleanups.push(() => item.removeEventListener("click", onClick));
+  });
 
   document.addEventListener("keydown", onKeyDown);
   cleanups.push(() => document.removeEventListener("keydown", onKeyDown));

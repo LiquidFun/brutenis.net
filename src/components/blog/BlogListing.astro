@@ -1,0 +1,64 @@
+---
+/**
+ * The blog listing, shared by / and /blog, which render the same thing.
+ *
+ * Besides the posts it carries one aggregate entry for the CTF writeups: they
+ * used to have their own nav tab, and now the whole collection appears here as a
+ * single card that opens /ctf.
+ */
+import PostCard from "./PostCard.astro";
+import TagCloud from "./TagCloud.astro";
+import { getCollection } from "astro:content";
+
+const posts = (await getCollection("blog", ({ data }) => !data.draft)).sort(
+  (a, b) => b.data.pubDate.valueOf() - a.data.pubDate.valueOf(),
+);
+
+const allTags = [...new Set(posts.flatMap((post) => post.data.tags))].sort();
+
+// Only the event *count* reaches the card: the names are raw directory names
+// from the writeups repo ("FOSDEM-2026"), and /ctf already lists them.
+const writeups = await getCollection("ctf");
+const events = [...new Set(writeups.map((w) => w.data.event))].sort((a, b) => {
+  const year = (event: string) =>
+    Math.max(...writeups.filter((w) => w.data.event === event).map((w) => w.data.eventYear ?? 0));
+  return year(b) - year(a);
+});
+const latestEventYear = Math.max(0, ...writeups.map((w) => w.data.eventYear ?? 0));
+
+// One sorted list so the CTF card sits among the posts by recency rather than
+// being pinned. It has no publication date of its own, so its newest event year
+// stands in as the sort key.
+const entries: { sortKey: number; post?: (typeof posts)[number]; ctf?: boolean }[] = [
+  ...posts.map((post) => ({ sortKey: post.data.pubDate.valueOf(), post })),
+  ...(writeups.length > 0 ? [{ sortKey: Date.UTC(latestEventYear, 11, 31), ctf: true }] : []),
+].sort((a, b) => b.sortKey - a.sortKey);
+---
+
+<h1 class="text-5xl font-heading font-bold text-yarn-coral mb-4">Blog</h1>
+<TagCloud tags={allTags} />
+<div class="grid gap-4">
+  {
+    entries.map((entry) =>
+      entry.post ? (
+        <PostCard
+          title={entry.post.data.title}
+          description={entry.post.data.description}
+          pubDate={entry.post.data.pubDate}
+          tags={entry.post.data.tags}
+          slug={entry.post.id}
+          heroImage={entry.post.data.heroImage}
+        />
+      ) : (
+        <PostCard
+          title="CTF Writeups"
+          description='Solutions and writeups from capture-the-flag competitions with team "Never :q!".'
+          meta={`${writeups.length} writeups across ${events.length} ${events.length === 1 ? "event" : "events"}`}
+          href="/ctf"
+          color="blue"
+          tags={[]}
+        />
+      ),
+    )
+  }
+</div>

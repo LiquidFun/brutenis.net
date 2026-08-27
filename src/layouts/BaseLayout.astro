@@ -6,7 +6,7 @@ interface Props {
   title: string;
   description?: string;
   noindex?: boolean;
-  /** Drops the max-w-5xl reading column so content spans the viewport (/photos). */
+  /** Drops the max-w-5xl reading column so content spans the viewport (/photography). */
   fullWidth?: boolean;
 }
 
@@ -94,7 +94,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 
       Opaque, not bg-bg-cream/90 + backdrop-blur: at 90% the content scrolling
       behind showed through, which also read as the bar moving. Most visible on
-      /photos, where a full-bleed photo tinted the whole bar.
+      /photography, where a full-bleed photo tinted the whole bar.
     -->
     <nav class="fixed top-0 inset-x-0 z-50 bg-bg-cream border-b-2 border-dashed border-yarn-coral/30">
       <div class="max-w-5xl mx-auto px-4 py-1 flex flex-col items-center sm:flex-row sm:items-center sm:justify-between gap-0 sm:gap-0 sm:py-3">
@@ -102,16 +102,21 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
           brutenis.net
         </a>
         <div class="nav-links flex gap-0 sm:gap-1 items-center flex-wrap justify-center sm:justify-start">
+          {/*
+            No CTF or Leaderboard tab. The writeups are reachable as a single
+            entry in the blog listing, and the leaderboard belongs to the yarn
+            easter-egg rather than to the site's contents — it is linked from the
+            game-over overlay, the footer and the About page. `extra` lists the
+            paths a tab should also light up for, so /ctf still shows as Blog.
+          */}
           {[
-            { href: "/blog", label: "Blog" },
-            { href: "/projects", label: "Projects" },
-            { href: "/games", label: "Games" },
-            { href: "/photos", label: "Photography" },
-            { href: "/ctf", label: "CTF" },
-            { href: "/leaderboard", label: "Leaderboard" },
-            { href: "/about", label: "About" },
-          ].map(({ href, label }) => (
-            <a href={href} class:list={["nav-link", { "nav-link-active": Astro.url.pathname.startsWith(href) || (href === "/blog" && Astro.url.pathname === "/") }]}>{label}</a>
+            { href: "/blog", label: "Blog", extra: ["/", "/ctf"] },
+            { href: "/projects", label: "Projects", extra: [] },
+            { href: "/games", label: "Games", extra: [] },
+            { href: "/photography", label: "Photography", extra: [] },
+            { href: "/about", label: "About", extra: ["/leaderboard"] },
+          ].map(({ href, label, extra }) => (
+            <a href={href} class:list={["nav-link", { "nav-link-active": Astro.url.pathname.startsWith(href) || extra.some((p) => p === "/" ? Astro.url.pathname === "/" : Astro.url.pathname.startsWith(p)) }]}>{label}</a>
           ))}
         </div>
       </div>
@@ -126,6 +131,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
         <p class="font-heading text-lg">&copy; {new Date().getFullYear()} brutenis.net</p>
         <div class="flex justify-center gap-4 mt-2">
           <a href="https://github.com/LiquidFun" class="hover:text-yarn-coral transition-colors">GitHub</a>
+          <a href="/leaderboard" class="hover:text-yarn-coral transition-colors">Leaderboard</a>
           <a href="/rss.xml" class="hover:text-yarn-coral transition-colors">RSS</a>
         </div>
         <p class="mt-3 text-xs text-text-muted/50 font-heading">Use the yarn ball to defend the blog entries</p>
@@ -350,18 +356,17 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     }
   }
 
-  /* Under ~1500px the nav row cannot fit the logo, the links, the "Disable Game"
+  /* Under ~1150px the nav row cannot fit the logo, the links, the "Disable Game"
      hint and the score at once, and the button would drop onto a second line
      mid-game. Drop the hint (the × and the tooltip still say what a click does)
-     and the row survives much further down. !important because the game script
-     sets these spans' display inline.
+     and the row survives down to ~1050. !important because the game script sets
+     these spans' display inline.
 
-     The threshold has moved out twice as the nav grew: 1150px with six links,
-     1250px once "Photos" was added, and 1500px now that it reads "Photography".
-     Below roughly 1200px the seven links no longer fit on one row whatever we
-     do and the list wraps — the button keeps its own space, so nothing
-     overlaps. */
-  @media (hover: hover) and (pointer: fine) and (max-width: 1500px) {
+     This threshold tracked the nav's width as tabs were added — out to 1250px
+     for "Photos" and 1500px for "Photography" — but dropping the CTF and
+     Leaderboard tabs freed more than those cost, so it is back to its original
+     value and the hint is visible again between 1150px and 1500px. */
+  @media (hover: hover) and (pointer: fine) and (max-width: 1150px) {
     .game-hud .hud-label,
     .game-hud .hud-separator {
       display: none !important;

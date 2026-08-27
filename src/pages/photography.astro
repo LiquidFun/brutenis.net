@@ -11,6 +11,9 @@ const albums = (await getCollection("photos")).sort((a, b) => a.data.order - b.d
 // the fold, and it will not upgrade one it has already fetched.
 const SIZES = "(max-width: 560px) 100vw, (max-width: 2700px) 60vw, (max-width: 3600px) 40vw, 30vw";
 
+// Each section carries data-album-title with the bare name: the heading wraps it
+// in the Album "…" framing, and the lightbox caption wants it unwrapped.
+
 // Photos above the fold load eagerly; everything else waits for the viewport.
 const EAGER_COUNT = 4;
 let rendered = 0;
@@ -33,7 +36,7 @@ let rendered = 0;
 
   {
     albums.map((album) => (
-      <section class="photo-album">
+      <section class="photo-album" data-album-title={album.data.title}>
         {/* The bare name stays the collection's title and each photo's alt text;
             the "Album" framing is presentation only. */}
         <h2 class="photo-album-title">

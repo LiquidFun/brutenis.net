@@ -2,35 +2,50 @@
 import TagPill from "./TagPill.astro";
 import { getTagColorClass, yarnColorClass } from "@lib/tag-colors";
 
+import type { YarnColorName } from "@lib/tag-colors";
+
 interface Props {
   title: string;
   description: string;
-  pubDate: Date;
+  /** Omitted by entries that are collections rather than dated posts. */
+  pubDate?: Date;
   tags: string[];
-  slug: string;
+  slug?: string;
   heroImage?: string;
+  /** Overrides the default /blog/<slug> destination. */
+  href?: string;
+  /** Shown in place of the date, for entries that do not have one. */
+  meta?: string;
+  /** Overrides the colour normally derived from the first tag. */
+  color?: YarnColorName;
 }
 
-const { title, description, pubDate, tags, slug, heroImage } = Astro.props;
+const { title, description, pubDate, tags, slug, heroImage, href, meta, color } = Astro.props;
 
-const formattedDate = pubDate.toLocaleDateString("en-US", {
+const formattedDate = pubDate?.toLocaleDateString("en-US", {
   year: "numeric",
   month: "long",
   day: "numeric",
 });
 
-const colorClass = tags.length > 0 ? getTagColorClass(tags[0]) : yarnColorClass("coral");
+const target = href ?? `/blog/${slug}`;
+const colorClass = color
+  ? yarnColorClass(color)
+  : tags.length > 0
+    ? getTagColorClass(tags[0])
+    : yarnColorClass("coral");
 ---
 
 <article class:list={["post-card", "clickable-card", colorClass]} data-tags={tags.join(",")}>
   <div class="post-card-inner">
     <div class="post-card-content">
-      <a href={`/blog/${slug}`} class="card-main-link">
+      <a href={target} class="card-main-link">
         <h2 class="text-2xl font-heading font-bold text-text-charcoal mb-1">
           {title}
         </h2>
       </a>
-      <time class="text-sm text-text-muted">{formattedDate}</time>
+      {formattedDate && <time class="text-sm text-text-muted">{formattedDate}</time>}
+      {!formattedDate && meta && <p class="text-sm text-text-muted">{meta}</p>}
       <p class="text-text-charcoal mt-2 mb-3">{description}</p>
       <div class="flex flex-wrap gap-2">
         {tags.map((tag) => <TagPill tag={tag} />)}

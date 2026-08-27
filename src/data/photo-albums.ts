@@ -1,5 +1,5 @@
 /**
- * Immich albums rendered on /photos, in the order they appear here.
+ * Immich albums rendered on /photography, in the order they appear here.
  *
  * The share keys are public on purpose: these are read-only "public share"
  * links, and the site self-hosts resized copies of the photos anyway (see

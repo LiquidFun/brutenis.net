@@ -1,5 +1,5 @@
 /**
- * Justified ("Google Photos") row layout for /photos.
+ * Justified ("Google Photos") row layout for /photography.
  *
  * The server renders fixed-height rows with a ragged right edge, which needs no
  * JavaScript and no per-photo inline styles — the page CSP forbids style

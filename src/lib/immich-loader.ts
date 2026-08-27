@@ -34,6 +34,47 @@ import type { PhotoAlbumSource } from "../data/photo-albums";
 const LONG_EDGES = [640, 1080, 1600, 2560, 3200];
 /** Grid fallback for browsers that ignore srcset. */
 const DEFAULT_WIDTH = 1080;
+
+/**
+ * Site credit burnt into the bottom-right of every rendition.
+ *
+ * Burnt in rather than overlaid with CSS so it survives the photo being saved or
+ * hotlinked, and so it is there in the lightbox at any zoom.
+ *
+ * The font is a real TTF committed under fonts/, not the @fontsource copy:
+ * @fontsource ships woff2 only, which FreeType cannot read, and libvips
+ * substitutes a missing family *silently* — so a build machine without Kalam
+ * installed (every CI runner) would have rendered the credit in some default
+ * sans with no warning. Passing `fontfile` explicitly removes that variable.
+ */
+const WATERMARK = {
+  text: "brutenis.net",
+  fontFile: "fonts/Kalam-Bold.ttf",
+  /**
+   * Point size as a fraction of the rendition's *short* edge, and inset as a
+   * fraction of its width.
+   *
+   * Short edge, not width: sizing off the width made landscapes carry a visibly
+   * bigger credit than portraits from the same bucket — a 3200px bucket is
+   * 3200x2133 one way round and 2136x3200 the other, so the width differs by
+   * half while the photos are the same size on screen. The short edge is ~2135
+   * either way, so both orientations now get the same credit.
+   */
+  sizeRatio: 0.014,
+  insetRatio: 0.012,
+  /** Pango markup alpha. */
+  opacity: "40%",
+  colour: "#ffffff",
+};
+
+/** Changing any watermark setting must re-encode, so it is part of the cache key. */
+const WATERMARK_SIGNATURE = [
+  WATERMARK.text,
+  WATERMARK.colour,
+  WATERMARK.opacity,
+  WATERMARK.sizeRatio,
+  WATERMARK.insetRatio,
+].join("|");
 const WEBP_QUALITY = 80;
 const CACHE_DIR = ".cache/immich";
 const OUTPUT_DIR = join("public", "photos");
@@ -118,6 +159,12 @@ interface CachedAsset {
    * all still check out.
    */
   sourceLongEdge: number;
+  /**
+   * The watermark settings these files were burnt with. Without it, changing the
+   * credit's size or opacity would leave every cached photo carrying the old one
+   * and appear to do nothing.
+   */
+  watermark: string;
   /** One per file in .cache/immich/renditions, ascending. */
   renditions: { bucket: number; width: number; height: number }[];
 }
@@ -277,6 +324,47 @@ async function orientedSize(buf: Buffer): Promise<{ width: number; height: numbe
   // Orientation 5-8 include a 90 degree rotation, so the stored dimensions are
   // transposed relative to what a viewer shows.
   return (meta.orientation ?? 1) >= 5 ? { width: height, height: width } : { width, height };
+}
+
+/**
+ * Rendered credit for a rendition this wide, or null if the font is missing.
+ *
+ * Memoised: the same handful of widths recur across every photo in every album,
+ * and Pango is the slow part of this loop.
+ */
+const watermarkCache = new Map<number, { buffer: Buffer; width: number; height: number } | null>();
+
+async function renderWatermark(
+  shortEdge: number,
+  logger: Logger,
+): Promise<{ buffer: Buffer; width: number; height: number } | null> {
+  const size = Math.max(6, Math.round(shortEdge * WATERMARK.sizeRatio));
+  const cached = watermarkCache.get(size);
+  if (cached !== undefined) return cached;
+
+  let result: { buffer: Buffer; width: number; height: number } | null = null;
+  if (!existsSync(WATERMARK.fontFile)) {
+    logger.error(`Watermark font missing at ${WATERMARK.fontFile}; photos will carry no credit`);
+  } else {
+    const markup = `<span foreground="${WATERMARK.colour}" alpha="${WATERMARK.opacity}">${WATERMARK.text}</span>`;
+    const { data, info } = await sharp({
+      text: {
+        text: markup,
+        font: `Kalam ${size}`,
+        fontfile: WATERMARK.fontFile,
+        rgba: true,
+        // At 72dpi a Pango point is exactly one pixel, so `size` is the height
+        // in pixels rather than something to convert.
+        dpi: 72,
+      },
+    })
+      .png()
+      .toBuffer({ resolveWithObject: true });
+    result = { buffer: data, width: info.width, height: info.height };
+  }
+
+  watermarkCache.set(size, result);
+  return result;
 }
 
 function cachedFileName(id: string, bucket: number): string {
@@ -495,6 +583,7 @@ async function loadAlbum(
           outputDir,
           renditionCache,
           assetIndex,
+          logger,
           onCacheHit: () => reused++,
           onEncoded: () => encoded++,
         });
@@ -574,6 +663,7 @@ async function ensurePhoto(
     outputDir: string;
     renditionCache: string;
     assetIndex: Record<string, CachedAsset>;
+    logger: Logger;
     onCacheHit(): void;
     onEncoded(): void;
   },
@@ -588,6 +678,7 @@ async function ensurePhoto(
     Array.isArray(cached.renditions) &&
     cached.renditions.length > 0 &&
     typeof cached.sourceLongEdge === "number" &&
+    cached.watermark === WATERMARK_SIGNATURE &&
     sameBuckets(cached.renditions, bucketsFor(cached.sourceLongEdge)) &&
     cached.renditions.every((r) =>
       existsSync(join(ctx.renditionCache, cachedFileName(asset.id, r.bucket))),
@@ -605,18 +696,49 @@ async function ensurePhoto(
     const sourceLongEdge = Math.max(source.width, source.height);
     const renditions: CachedAsset["renditions"] = [];
     for (const bucket of bucketsFor(sourceLongEdge)) {
-      const { data, info } = await sharp(buffer)
+      // Resized to raw pixels first, because the credit has to be sized and
+      // placed against the rendition's real dimensions, which rounding makes
+      // awkward to predict. Raw avoids paying for an intermediate encode.
+      const resized = await sharp(buffer)
         .rotate()
         // Square bounding box with fit "inside": the long edge lands on the
         // bucket whichever way round the photo is.
         .resize({ width: bucket, height: bucket, fit: "inside", withoutEnlargement: true })
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      const pipeline = sharp(resized.data, {
+        raw: {
+          width: resized.info.width,
+          height: resized.info.height,
+          channels: resized.info.channels,
+        },
+      });
+
+      const credit = await renderWatermark(
+        Math.min(resized.info.width, resized.info.height),
+        ctx.logger,
+      );
+      if (credit) {
+        const inset = Math.round(resized.info.width * WATERMARK.insetRatio);
+        pipeline.composite([
+          {
+            input: credit.buffer,
+            left: Math.max(0, resized.info.width - credit.width - inset),
+            top: Math.max(0, resized.info.height - credit.height - inset),
+            blend: "over",
+          },
+        ]);
+      }
+
+      const { data, info } = await pipeline
         .webp({ quality: WEBP_QUALITY })
         .toBuffer({ resolveWithObject: true });
       writeFileSync(join(ctx.renditionCache, cachedFileName(asset.id, bucket)), data);
       renditions.push({ bucket, width: info.width, height: info.height });
     }
 
-    entry = { checksum, sourceLongEdge, renditions };
+    entry = { checksum, sourceLongEdge, watermark: WATERMARK_SIGNATURE, renditions };
     ctx.assetIndex[asset.id] = entry;
     ctx.onEncoded();
   }
