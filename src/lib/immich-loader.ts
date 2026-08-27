@@ -55,7 +55,11 @@ interface ImmichAsset {
   checksum?: string;
   fileCreatedAt?: string;
   localDateTime?: string;
-  exifInfo?: { description?: string | null } | null;
+  exifInfo?: {
+    description?: string | null;
+    /** Immich's star rating, 1-5, or null when unrated. */
+    rating?: number | null;
+  } | null;
 }
 
 interface ImmichSharedLink {
@@ -207,6 +211,26 @@ async function fetchAlbumAssets(
 }
 
 /**
+ * Orders an album: highest star rating first, then by date.
+ *
+ * Unrated photos sort as 0, so they follow everything with a rating rather than
+ * leading. The date direction follows the album's own `order` in Immich, which is
+ * what decided the sequence before rating was considered at all.
+ */
+function sortByRatingThenDate(assets: ImmichAsset[], order: string | undefined): ImmichAsset[] {
+  const direction = order === "asc" ? 1 : -1;
+  const taken = (asset: ImmichAsset) =>
+    Date.parse(asset.fileCreatedAt ?? asset.localDateTime ?? "") || 0;
+
+  return assets.slice().sort((a, b) => {
+    const ratingA = a.exifInfo?.rating ?? 0;
+    const ratingB = b.exifInfo?.rating ?? 0;
+    if (ratingA !== ratingB) return ratingB - ratingA;
+    return (taken(a) - taken(b)) * direction;
+  });
+}
+
+/**
  * Original bytes for an asset, falling back to the renditions Immich generates
  * itself. `fullsize` is the web-friendly full-resolution copy Immich makes for
  * originals browsers cannot read, so it covers the formats sharp may not decode
@@ -293,6 +317,7 @@ export function immichLoader(options: { albums: PhotoAlbumSource[] }): Loader {
       store.clear();
 
       const liveSlugs = new Set<string>();
+      let skippedAlbums = 0;
 
       for (const [order, source] of options.albums.entries()) {
         const album = await loadAlbum(source, order, {
@@ -301,7 +326,10 @@ export function immichLoader(options: { albums: PhotoAlbumSource[] }): Loader {
           albumCache,
           assetIndex,
         });
-        if (!album) continue;
+        if (!album) {
+          skippedAlbums++;
+          continue;
+        }
         liveSlugs.add(album.slug);
 
         writeFileSync(assetIndexPath, JSON.stringify(assetIndex, null, 2));
@@ -315,7 +343,7 @@ export function immichLoader(options: { albums: PhotoAlbumSource[] }): Loader {
         store.set({ id: album.slug, data });
       }
 
-      pruneOutputDirs(liveSlugs, logger);
+      pruneOutputDirs(liveSlugs, skippedAlbums, logger);
     },
   };
 }
@@ -328,11 +356,18 @@ export function immichLoader(options: { albums: PhotoAlbumSource[] }): Loader {
  * into the build wholesale — the stale copy would ship. CI starts from an empty
  * public/photos so it never accumulates there; this keeps local builds honest.
  *
- * Skipped entirely when no album loaded, so an Immich outage cannot empty the
- * directory.
+ * Deleting is the irreversible half of this loader, so it only runs when every
+ * configured album loaded. One album failing used to be enough to delete its
+ * rendered photos, which is the wrong way to react to a bad read.
  */
-function pruneOutputDirs(liveSlugs: Set<string>, logger: Logger): void {
+function pruneOutputDirs(liveSlugs: Set<string>, skippedAlbums: number, logger: Logger): void {
   if (liveSlugs.size === 0 || !existsSync(OUTPUT_DIR)) return;
+  if (skippedAlbums > 0) {
+    logger.warn(
+      `Not pruning public/photos: ${skippedAlbums} album(s) did not load, and their directories must survive`,
+    );
+    return;
+  }
 
   for (const entry of readdirSync(OUTPUT_DIR, { withFileTypes: true })) {
     if (!entry.isDirectory() || liveSlugs.has(entry.name)) continue;
@@ -385,16 +420,12 @@ async function loadAlbum(
   if (!link) {
     // Immich is unreachable. A restored cache still has every rendition and the
     // asset list from the last successful build, so the page is unchanged.
-    if (!existsSync(metaPath)) {
-      logger.error(
-        `No cached metadata for share ${key.slice(0, 8)}... either - this album will be missing from /photos`,
-      );
-      return null;
-    }
-    const cached: PhotoAlbum = JSON.parse(readFileSync(metaPath, "utf-8"));
-    copyRenditions(cached, renditionCache, logger);
-    logger.info(`Album "${cached.title}": ${cached.photos.length} photos from cache (Immich unreachable)`);
-    return { ...cached, order };
+    const cached = loadCachedAlbum(metaPath, order, renditionCache, logger, "Immich unreachable");
+    if (cached) return cached;
+    logger.error(
+      `No cached metadata for share ${key.slice(0, 8)}... either - this album will be missing from /photos`,
+    );
+    return null;
   }
 
   if (link.password) {
@@ -411,13 +442,36 @@ async function loadAlbum(
     logger.warn(`Album "${title}": Immich reports ${expected} assets but listed ${assets.length}`);
   }
 
-  const images = assets.filter((a) => (a.type ?? "IMAGE").toUpperCase() === "IMAGE");
-  const skipped = assets.length - images.length;
+  const unsorted = assets.filter((a) => (a.type ?? "IMAGE").toUpperCase() === "IMAGE");
+  const skipped = assets.length - unsorted.length;
   if (skipped > 0) logger.info(`Album "${title}": skipping ${skipped} non-image asset(s)`);
-  if (images.length === 0) {
+
+  if (unsorted.length === 0) {
+    // An empty listing is only trustworthy when Immich agrees the album is
+    // empty. Otherwise the read raced something — an album being edited answers
+    // with zero assets while still reporting a non-zero assetCount — and taking
+    // it at face value would drop the album and delete its rendered files.
+    if (expected !== 0) {
+      const cached = loadCachedAlbum(
+        metaPath,
+        order,
+        renditionCache,
+        logger,
+        `Immich listed no images but reports ${expected} assets`,
+      );
+      if (cached) return cached;
+    }
     logger.warn(`Album "${title}" has no image assets`);
     return null;
   }
+
+  const images = sortByRatingThenDate(unsorted, link.album?.order);
+  const rated = images.filter((a) => (a.exifInfo?.rating ?? 0) > 0).length;
+  logger.info(
+    rated > 0
+      ? `Album "${title}": ${rated}/${images.length} photos rated, highest first`
+      : `Album "${title}": no photos rated in Immich, ordering by date alone`,
+  );
 
   const outputDir = join(OUTPUT_DIR, slug);
   mkdirSync(outputDir, { recursive: true });
@@ -470,6 +524,25 @@ async function loadAlbum(
       `${failed > 0 ? `, ${failed} failed` : ""})`,
   );
   return album;
+}
+
+/**
+ * Rebuilds an album purely from .cache/immich, for when this run could not get a
+ * trustworthy answer out of Immich. Returns null when there is no cache to fall
+ * back to.
+ */
+function loadCachedAlbum(
+  metaPath: string,
+  order: number,
+  renditionCache: string,
+  logger: Logger,
+  reason: string,
+): PhotoAlbum | null {
+  if (!existsSync(metaPath)) return null;
+  const cached: PhotoAlbum = JSON.parse(readFileSync(metaPath, "utf-8"));
+  copyRenditions(cached, renditionCache, logger);
+  logger.warn(`Album "${cached.title}": reusing ${cached.photos.length} cached photos (${reason})`);
+  return { ...cached, order };
 }
 
 /** Copies a cached album's renditions back into public/photos/. */

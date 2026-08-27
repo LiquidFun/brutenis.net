@@ -1,4 +1,5 @@
 import { getCachedRect } from "./monsters";
+import { CANVAS_HEADING_FONT } from "../fonts";
 
 // ── Upgrade Types & Interfaces ──
 
@@ -417,7 +418,7 @@ export class UpgradeManager {
 
       // Icon per type
       ctx.fillStyle = "#fff";
-      ctx.font = "bold 16px Caveat, cursive";
+      ctx.font = `bold 16px ${CANVAS_HEADING_FONT}`;
       ctx.textAlign = "center";
       ctx.textBaseline = "middle";
       this.drawPickupIcon(ctx, x, y, pickup.type, pickup.radius, time);
@@ -509,7 +510,7 @@ export class UpgradeManager {
       }
       case "double-damage": {
         // "2x" text
-        ctx.font = "bold 14px Caveat, cursive";
+        ctx.font = `bold 14px ${CANVAS_HEADING_FONT}`;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText("2x", x, y);

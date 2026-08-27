@@ -1,10 +1,9 @@
 @import "tailwindcss";
 
 /* Self-hosted fonts (no third-party requests) */
-@import "@fontsource/caveat/latin-400.css";
-@import "@fontsource/caveat/latin-500.css";
-@import "@fontsource/caveat/latin-600.css";
-@import "@fontsource/caveat/latin-700.css";
+/* Kalam ships 300/400/700 only; nothing here asks for 500 or 600. */
+@import "@fontsource/kalam/latin-400.css";
+@import "@fontsource/kalam/latin-700.css";
 @import "@fontsource/patrick-hand/latin-400.css";
 @import "@fontsource/jetbrains-mono/latin-400.css";
 @import "@fontsource/jetbrains-mono/latin-500.css";
@@ -30,7 +29,7 @@
   --color-accent-hover: #ee5a5a;
 
   /* Fonts */
-  --font-heading: "Caveat", cursive;
+  --font-heading: "Kalam", cursive;
   --font-body: "Patrick Hand", cursive;
   --font-mono: "JetBrains Mono", monospace;
 }
@@ -263,7 +262,7 @@
   justify-content: center;
   pointer-events: none;
   z-index: 2;
-  font-family: "Caveat", cursive;
+  font-family: var(--font-heading);
   font-size: 2rem;
   font-weight: bold;
   color: #c0392b;

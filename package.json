@@ -14,8 +14,8 @@
   "dependencies": {
     "@astrojs/rss": "^4.0.18",
     "@astrojs/sitemap": "^3.7.2",
-    "@fontsource/caveat": "^5.2.8",
     "@fontsource/jetbrains-mono": "^5.2.8",
+    "@fontsource/kalam": "^5.3.0",
     "@fontsource/patrick-hand": "^5.2.8",
     "@tailwindcss/vite": "^4.2.2",
     "astro": "^6.1.8",

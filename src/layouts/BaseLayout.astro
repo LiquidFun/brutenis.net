@@ -106,7 +106,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
             { href: "/blog", label: "Blog" },
             { href: "/projects", label: "Projects" },
             { href: "/games", label: "Games" },
-            { href: "/photos", label: "Photos" },
+            { href: "/photos", label: "Photography" },
             { href: "/ctf", label: "CTF" },
             { href: "/leaderboard", label: "Leaderboard" },
             { href: "/about", label: "About" },
@@ -350,17 +350,18 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     }
   }
 
-  /* Under ~1250px the nav row cannot fit the logo, the links, the "Disable Game"
+  /* Under ~1500px the nav row cannot fit the logo, the links, the "Disable Game"
      hint and the score at once, and the button would drop onto a second line
      mid-game. Drop the hint (the × and the tooltip still say what a click does)
-     and the row survives down to ~1100. !important because the game script sets
-     these spans' display inline.
+     and the row survives much further down. !important because the game script
+     sets these spans' display inline.
 
-     The threshold was 1150px while there were six links; the "Photos" tab needs
-     the extra ~100px, otherwise the links wrap between 1150 and 1210. Between
-     1024 and 1100 seven links no longer fit on one row and the list wraps — the
-     button still has its own space, so nothing overlaps. */
-  @media (hover: hover) and (pointer: fine) and (max-width: 1250px) {
+     The threshold has moved out twice as the nav grew: 1150px with six links,
+     1250px once "Photos" was added, and 1500px now that it reads "Photography".
+     Below roughly 1200px the seven links no longer fit on one row whatever we
+     do and the list wraps — the button keeps its own space, so nothing
+     overlaps. */
+  @media (hover: hover) and (pointer: fine) and (max-width: 1500px) {
     .game-hud .hud-label,
     .game-hud .hud-separator {
       display: none !important;

@@ -4,25 +4,15 @@
  * The server renders fixed-height rows with a ragged right edge, which needs no
  * JavaScript and no per-photo inline styles — the page CSP forbids style
  * attributes, so the pre-JS layout leans on the <img> width/height attributes
- * instead. This module then packs the photos into rows that fill the container
- * exactly and collapses each album to COLLAPSED_ROWS until "show more" is
- * pressed. Setting .style.* from script is unaffected by the CSP.
+ * instead. This module then packs the photos into rows that each fill the
+ * container exactly, so every row is the same width. Setting .style.* from
+ * script is unaffected by the CSP.
+ *
+ * Every photo in every album is shown; there is no collapsing.
  */
 
 /** Must match the gap in the .photo-grid rule. */
 const GAP = 8;
-/**
- * Rows shown before the "show more" button takes over. Two rows is the intent,
- * but at one photo per row that is a two-photo preview of a whole album, so
- * narrow layouts get more rows to show a comparable number of photos.
- */
-const COLLAPSED_ROWS = 2;
-const COLLAPSED_ROWS_SINGLE_COLUMN = 4;
-/**
- * How much of the next row is left showing above the "show more" button, as a
- * hint that the album continues. .photo-peek fades its lower part out.
- */
-const PEEK_HEIGHT = 240;
 /**
  * Photos per row aimed for at a given container width. Row height falls out of
  * this and the actual aspect ratios, so a row of panoramas ends up shorter and
@@ -136,16 +126,10 @@ function rebalanceLastRow(rows: Item[][], containerWidth: number): void {
  * Sizes one row so its photos plus gaps span exactly `containerWidth`, and
  * returns the height used. Every row is justified, including the last, so all
  * rows are the same width.
- *
- * `clipTo` shortens the boxes without touching the widths, which is what leaves
- * the peek row showing only the tops of its photos while still spanning the
- * container.
  */
-function applyRow(row: Item[], containerWidth: number, clipTo?: number): number {
+function applyRow(row: Item[], containerWidth: number): number {
   const available = containerWidth - GAP * (row.length - 1);
   const height = justifiedHeight(row, containerWidth);
-  // Never taller than the photos actually are.
-  const boxHeight = clipTo === undefined ? height : Math.min(clipTo, height);
 
   let used = 0;
   row.forEach((item, i) => {
@@ -158,7 +142,7 @@ function applyRow(row: Item[], containerWidth: number, clipTo?: number): number 
         : Math.round(item.aspect * height);
     used += width;
     item.el.style.width = `${width}px`;
-    item.el.style.height = `${Math.round(boxHeight)}px`;
+    item.el.style.height = `${Math.round(height)}px`;
     // The markup can only carry a rough `sizes` estimate, since a row's photo
     // count depends on the aspect ratios that land in it. Now that the exact
     // width is known, hand it to the browser so it picks the right rendition —
@@ -190,36 +174,9 @@ function layoutAlbum(album: HTMLElement): void {
   const rows = packRows(items, containerWidth, target, maxPerRow);
   rebalanceLastRow(rows, containerWidth);
 
-  const collapsedRows = perRow === 1 ? COLLAPSED_ROWS_SINGLE_COLUMN : COLLAPSED_ROWS;
-  const expanded = album.dataset.expanded === "true";
-  const visibleRows = expanded ? rows.length : Math.min(collapsedRows, rows.length);
-
-  rows.forEach((row, index) => {
-    // The row straight after the visible ones is clipped to a faded sliver
-    // instead of being hidden, so the album visibly continues past the button.
-    const isPeek = !expanded && index === visibleRows;
-    const hidden = !expanded && index > visibleRows;
-    for (const item of row) {
-      item.el.classList.toggle("photo-hidden", hidden);
-      item.el.classList.toggle("photo-peek", isPeek);
-    }
-    if (!hidden) applyRow(row, containerWidth, isPeek ? PEEK_HEIGHT : undefined);
-  });
+  for (const row of rows) applyRow(row, containerWidth);
 
   grid.classList.add("photo-grid-justified");
-
-  const more = album.querySelector<HTMLElement>(".photo-more");
-  if (more) {
-    const button = more.querySelector("button");
-    // collapsedRows, not COLLAPSED_ROWS: at one photo per row the threshold is
-    // higher, and comparing against the constant left the button on screen
-    // saying "Show 0 more" for a three-row album on a phone.
-    more.classList.toggle("photo-hidden", rows.length <= collapsedRows);
-    if (button) {
-      const hiddenCount = rows.slice(visibleRows).reduce((n, row) => n + row.length, 0);
-      button.textContent = expanded ? "Show less" : `Show ${hiddenCount} more`;
-    }
-  }
 }
 
 export function initGallery(): void {
@@ -228,23 +185,7 @@ export function initGallery(): void {
   const albums = [...document.querySelectorAll<HTMLElement>(".photo-album")];
   if (albums.length === 0) return;
 
-  for (const album of albums) {
-    album.dataset.expanded ??= "false";
-    layoutAlbum(album);
-
-    const button = album.querySelector<HTMLElement>(".photo-more button");
-    if (!button) continue;
-    const onClick = () => {
-      const collapsing = album.dataset.expanded === "true";
-      album.dataset.expanded = collapsing ? "false" : "true";
-      layoutAlbum(album);
-      // Collapsing can leave the viewport below the album; keep the heading in
-      // view so the page does not appear to jump to an unrelated album.
-      if (collapsing) album.scrollIntoView({ block: "nearest" });
-    };
-    button.addEventListener("click", onClick);
-    cleanups.push(() => button.removeEventListener("click", onClick));
-  }
+  for (const album of albums) layoutAlbum(album);
 
   // One rAF-throttled relayout for the whole page: every album depends on the
   // same container width.
@@ -264,8 +205,8 @@ export function initGallery(): void {
 }
 
 /**
- * Client-side navigation does not reset module state, so the resize listener and
- * button handlers from the previous visit have to go before re-initialising.
+ * Client-side navigation does not reset module state, so the resize listener from
+ * the previous visit has to go before re-initialising.
  */
 export function teardownGallery(): void {
   for (const cleanup of cleanups) cleanup();

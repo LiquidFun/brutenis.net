@@ -20,14 +20,22 @@ export interface PhotoAlbumSource {
 }
 
 export const photoAlbums: PhotoAlbumSource[] = [
+  // Karlsruhe
   {
     shareUrl:
       "https://photos.brutenis.net/share/61f17wuI-0Z7VImz26nwodtWBZnLYr7yxbtlEXzwBug3hXYk1pysvYjaeHieHaf9vvA",
   },
+  // Sagrada Família
+  {
+    shareUrl:
+      "https://photos.brutenis.net/share/mMaIynI2hSM-cuIeRGfpzgp-Wyrvr6TcUwXu9JIBLmk1culMaOK79k4kgbEnYNiywKM",
+  },
+  // Barcelona
   {
     shareUrl:
       "https://photos.brutenis.net/share/D2xCOlb0q1yls10FWWSgDI89IzBGUDwNWG1aIl3JtpiqHRHH8ma8V0wm92aWAEvv7wc",
   },
+  // Industrial
   {
     shareUrl:
       "https://photos.brutenis.net/share/XJ5Hp2KgNty4A8VHKx766eQYrv5NR3jwu5wkbJy7ZEVwwwYE8RbWQu92mupOYB5AKnw",

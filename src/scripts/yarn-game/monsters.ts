@@ -1,3 +1,4 @@
+import { CANVAS_HEADING_FONT } from "../fonts";
 const MONSTER_COLORS = [
   { body: "#6c3483", eye: "#e74c3c", wing: "#8e44ad" },
   { body: "#1a5276", eye: "#f39c12", wing: "#2980b9" },
@@ -1242,14 +1243,14 @@ export class MonsterManager {
       ctx.scale(scale, scale);
 
       // Shadow for readability
-      ctx.font = "bold 64px Caveat, cursive";
+      ctx.font = `bold 64px ${CANVAS_HEADING_FONT}`;
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillStyle = "rgba(0,0,0,0.15)";
       ctx.fillText(`Level ${this.level}!`, 3, 3);
       ctx.fillStyle = "#ff6b6b";
       ctx.fillText(`Level ${this.level}!`, 0, 0);
 
-      ctx.font = "bold 28px Caveat, cursive";
+      ctx.font = `bold 28px ${CANVAS_HEADING_FONT}`;
       ctx.fillStyle = "#2d3436";
       const msgs = this.level === 10 ? "BOSS! Find the opening in its shield!"
         : this.level >= 10 ? "Colossal beasts incoming!"

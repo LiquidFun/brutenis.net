@@ -17,11 +17,11 @@ let rendered = 0;
 ---
 
 <BaseLayout
-  title="Photos"
+  title="Photography"
   description="Photo albums - a selection of my favourite pictures"
   fullWidth
 >
-  <h1 class="sr-only">Photos</h1>
+  <h1 class="sr-only">Photography</h1>
 
   {
     albums.length === 0 && (
@@ -33,8 +33,12 @@ let rendered = 0;
 
   {
     albums.map((album) => (
-      <section class="photo-album" data-expanded="false">
-        <h2 class="photo-album-title">{album.data.title}</h2>
+      <section class="photo-album">
+        {/* The bare name stays the collection's title and each photo's alt text;
+            the "Album" framing is presentation only. */}
+        <h2 class="photo-album-title">
+          <span class="photo-album-label">Album</span> &#8220;{album.data.title}&#8221;
+        </h2>
         <div class="photo-grid">
           {album.data.photos.map((photo) => {
             const eager = rendered++ < EAGER_COUNT;
@@ -59,9 +63,6 @@ let rendered = 0;
               </a>
             );
           })}
-        </div>
-        <div class="photo-more photo-hidden">
-          <button type="button">Show more</button>
         </div>
       </section>
     ))
@@ -103,12 +104,19 @@ let rendered = 0;
   }
 
   .photo-album-title {
-    font-family: "Caveat", cursive;
+    font-family: var(--font-heading);
     font-size: 2rem;
     font-weight: 700;
-    color: var(--color-text-muted);
+    color: var(--color-text-charcoal);
     text-align: center;
     margin-bottom: 0.75rem;
+  }
+
+  /* "Album" is the label, the quoted name is the subject — coral and a lighter
+     weight keep the generic word from competing with it. */
+  .photo-album-label {
+    color: var(--color-yarn-coral);
+    font-weight: 400;
   }
 
   /* The 8px gap is duplicated as GAP in @scripts/photos/gallery.ts, which sizes
@@ -120,14 +128,9 @@ let rendered = 0;
   }
 
   /* Before the layout script runs: fixed-height rows with a ragged right edge,
-     derived purely from each <img>'s width/height attributes. Clipped to about
-     two rows so the page does not show every photo and then collapse. Roughly
-     the height the script settles on, to keep the handover from jumping. */
-  .photo-grid:not(.photo-grid-justified) {
-    max-height: 1128px;
-    overflow: hidden;
-  }
-
+     derived purely from each <img>'s width/height attributes. Roughly the height
+     the script settles on, to keep the handover from jumping. Not clipped — every
+     photo is shown. */
   .photo-item {
     display: block;
     height: 560px;
@@ -162,51 +165,7 @@ let rendered = 0;
     object-fit: cover;
   }
 
-  /* The clipped top of the next row, above the "show more" button. The script
-     shortens the boxes but leaves the widths alone, so the row still spans the
-     container. Photos keep their colours; only the lower part fades out, so it
-     reads as the album continuing rather than as disabled content. */
-  .photo-peek {
-    /* Decorative: the button is the thing to click, and the photos are clipped
-       anyway. Also suppresses the hover transform. */
-    pointer-events: none;
-    -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 40%, transparent 100%);
-    mask-image: linear-gradient(to bottom, #000 0%, #000 40%, transparent 100%);
-  }
-
-  /* Show the top of each photo rather than its middle. */
-  .photo-grid-justified .photo-peek img {
-    object-position: top;
-  }
-
-  .photo-more {
-    display: flex;
-    justify-content: center;
-    margin-top: 0.75rem;
-  }
-
-  .photo-more button {
-    font-family: "Caveat", cursive;
-    font-size: 1.25rem;
-    color: var(--color-text-charcoal);
-    background: var(--color-bg-warm);
-    border: 2px dashed var(--color-yarn-coral);
-    border-radius: 999px;
-    padding: 0.25rem 1.5rem;
-    cursor: pointer;
-    transition:
-      background 0.15s ease,
-      color 0.15s ease;
-  }
-
-  .photo-more button:hover {
-    background: var(--color-yarn-coral);
-    color: var(--color-bg-cream);
-  }
-
-  /* Toggled by both scripts to hide collapsed photos, the "show more" button and
-     the viewer's arrows. It has to come after .photo-more's display:flex — equal
-     specificity, so source order decides. */
+  /* Toggled by the lightbox to drop its arrows on a single-photo album. */
   .photo-hidden {
     display: none;
   }
@@ -261,7 +220,7 @@ let rendered = 0;
   .photo-lightbox-close,
   .photo-lightbox-nav {
     position: absolute;
-    font-family: "Caveat", cursive;
+    font-family: var(--font-heading);
     color: var(--color-bg-cream);
     background: rgba(20, 18, 16, 0.45);
     border: 2px dashed rgba(254, 249, 239, 0.5);
@@ -309,7 +268,7 @@ let rendered = 0;
     bottom: 1rem;
     left: 50%;
     transform: translateX(-50%);
-    font-family: "Caveat", cursive;
+    font-family: var(--font-heading);
     font-size: 1.25rem;
     color: rgba(254, 249, 239, 0.75);
     pointer-events: none;

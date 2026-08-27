@@ -2,6 +2,7 @@ import { EventTracker } from "./event-tracker";
 import { submitScore as apiSubmitScore, clearSession } from "./leaderboard-api";
 import { MonsterManager } from "./monsters";
 import { UpgradeManager } from "./upgrades";
+import { CANVAS_HEADING_FONT } from "../fonts";
 
 let canvas: HTMLCanvasElement | null = null;
 let ctx: CanvasRenderingContext2D | null = null;
@@ -82,7 +83,7 @@ function drawHint(ctx: CanvasRenderingContext2D, dt: number) {
   ctx.translate(cx, cy + yOff);
   ctx.scale(scale, scale);
 
-  ctx.font = "bold 28px Caveat, cursive";
+  ctx.font = `bold 28px ${CANVAS_HEADING_FONT}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = "rgba(0,0,0,0.12)";
@@ -123,7 +124,7 @@ function drawToast(ctx: CanvasRenderingContext2D, dt: number) {
   ctx.translate(cx, cy + yOff);
   ctx.scale(scale, scale);
 
-  ctx.font = "bold 52px Caveat, cursive";
+  ctx.font = `bold 52px ${CANVAS_HEADING_FONT}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
   ctx.fillStyle = "rgba(0,0,0,0.15)";

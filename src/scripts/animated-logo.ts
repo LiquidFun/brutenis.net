@@ -1,3 +1,4 @@
+import { CANVAS_HEADING_FONT } from "./fonts";
 const YARN_COLORS = [
   "#ff6b6b", "#4ecdc4", "#a06cd5", "#ff8fab",
   "#74b9ff", "#55efc4", "#fdcb6e", "#e17055",
@@ -22,7 +23,7 @@ let letterWobbles: LetterWobble[] = [];
 
 function generateWobble() {
   if (!ctx) return;
-  ctx.font = `bold ${FONT_SIZE}px Caveat, cursive`;
+  ctx.font = `bold ${FONT_SIZE}px ${CANVAS_HEADING_FONT}`;
 
   letterWobbles = [];
   let x = 0;
@@ -60,7 +61,7 @@ function drawLogo() {
   const startX = isMobile ? (canvas.width - totalWidth) / 2 : 4;
   const y = canvas.height / 2;
 
-  ctx.font = `bold ${FONT_SIZE}px Caveat, cursive`;
+  ctx.font = `bold ${FONT_SIZE}px ${CANVAS_HEADING_FONT}`;
   ctx.textBaseline = "middle";
 
   for (let i = 0; i < TEXT.length; i++) {
