@@ -195,7 +195,17 @@ import BaseLayout from "@layouts/BaseLayout.astro";
     color: var(--color-text-charcoal);
     line-height: 1.2;
     max-width: 14rem;
-    overflow-wrap: anywhere;
+    /* break-word, not anywhere. `anywhere` also shrinks the cell's *min-content*
+       width to a single character, and auto table layout then hands the name
+       column that minimum and gives the space to the columns that cannot shrink
+       — so on a phone every name rendered one letter per line. `break-word`
+       still breaks a long unbroken name rather than letting it overflow, but
+       leaves the intrinsic width alone. The wrapper scrolls horizontally when
+       the table genuinely does not fit. */
+    overflow-wrap: break-word;
+    /* Floor for the same reason: keep the column readable even when the other
+       columns are competing for room. */
+    min-width: 7rem;
   }
 
   .leaderboard-table .lb-score {

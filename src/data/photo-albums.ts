@@ -35,6 +35,11 @@ export const photoAlbums: PhotoAlbumSource[] = [
     shareUrl:
       "https://photos.brutenis.net/share/D2xCOlb0q1yls10FWWSgDI89IzBGUDwNWG1aIl3JtpiqHRHH8ma8V0wm92aWAEvv7wc",
   },
+  // The World in Little
+  {
+    shareUrl:
+      "https://photos.brutenis.net/share/i2w3d0N_M7-kEmctaq4ziGiZv2Uch-00X9PVgUqDQDQPvEPNlelvfBYlgH5cShc04i0"
+  },
   // Industrial
   {
     shareUrl:
