@@ -2,6 +2,7 @@ import { VerletRope } from "./verlet-rope";
 import { YarnBall } from "./yarn-ball";
 import { drawRope, drawYarnBall } from "./renderer";
 import { GyroBall } from "./gyro-ball";
+import { WebAnchorManager } from "./web-anchors";
 
 let canvas: HTMLCanvasElement | null = null;
 let ctx: CanvasRenderingContext2D | null = null;
@@ -31,6 +32,18 @@ let gyroHintShown = false;
 
 // ── Radius bonus from upgrades ──
 let ballRadiusBonus = 0;
+
+// ── Spider webs pinning the yarn (see web-anchors.ts) ──
+const webAnchors = new WebAnchorManager(
+  () => ropes.map(r => r.rope),
+  () => gyroBalls,
+  () => gyroActive,
+);
+(window as any).__yarnCursorAttachWeb = (id: string, x: number, y: number, maxDist: number) =>
+  webAnchors.attach(id, x, y, maxDist);
+(window as any).__yarnCursorWebInfo = (id: string) => webAnchors.info(id);
+(window as any).__yarnCursorReleaseWeb = (id: string) => webAnchors.release(id);
+(window as any).__yarnCursorReleaseAllWebs = () => webAnchors.releaseAll();
 
 // ── Visibility: hide on deeper pages (no game) or when game disabled ──
 function shouldShowCursor(): boolean {
@@ -198,10 +211,12 @@ function animate(time: number) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   if (shouldShowCursor()) {
+    for (const entry of ropes) entry.rope.update(mouseX, mouseY, dt);
+    // Re-pin webbed points after the solver has run, before anything is drawn
+    webAnchors.update(dt);
     // Draw extra balls first (behind primary)
     for (let i = ropes.length - 1; i >= 0; i--) {
       const entry = ropes[i];
-      entry.rope.update(mouseX, mouseY, dt);
       const points = entry.rope.getPoints();
       drawRope(ctx, points, entry.color);
       drawYarnBall(ctx, entry.ball, points);
@@ -331,6 +346,7 @@ function animateGyro(time: number) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   if (shouldShowCursor()) {
     // Update and draw all gyro balls (extras behind primary)
+    webAnchors.update(dt);
     for (let i = gyroBalls.length - 1; i >= 0; i--) {
       gyroBalls[i].update(dt, canvas.width, canvas.height);
       gyroBalls[i].draw(ctx);

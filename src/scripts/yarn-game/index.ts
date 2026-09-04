@@ -56,7 +56,8 @@ function drawHint(ctx: CanvasRenderingContext2D, dt: number) {
   hintElapsed += dt;
 
   const cx = window.innerWidth / 2;
-  const cy = window.innerHeight / 2 + 60;
+  // Clears the level-up banner's subtitle, which sits at +45
+  const cy = window.innerHeight / 2 + 110;
 
   let alpha = 1, yOff = 0, scale = 1;
 
@@ -455,6 +456,8 @@ function init() {
 
 function initCheatPanel() {
   if (location.hostname !== "10.0.24.2") return;
+  // Live monster list, for poking at boss fights from the dev console
+  (window as any).__cheatMonsters = () => monsters?.monsters ?? [];
   if (document.getElementById("cheat-panel")) return;
 
   const panel = document.createElement("div");
@@ -475,23 +478,40 @@ function initCheatPanel() {
     alignItems: "center",
   });
 
-  const btn = document.createElement("button");
-  btn.textContent = "Next Level";
-  Object.assign(btn.style, {
-    background: "#ff6b6b",
-    color: "#fff",
-    border: "none",
-    borderRadius: "4px",
-    padding: "4px 10px",
-    cursor: "pointer",
-    fontFamily: "inherit",
-    fontSize: "13px",
-  });
-  btn.addEventListener("click", () => {
-    if (monsters) monsters.skipToNextLevel();
+  const addButton = (label: string, onClick: () => void) => {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    Object.assign(btn.style, {
+      background: "#ff6b6b",
+      color: "#fff",
+      border: "none",
+      borderRadius: "4px",
+      padding: "4px 10px",
+      cursor: "pointer",
+      fontFamily: "inherit",
+      fontSize: "13px",
+    });
+    btn.addEventListener("click", onClick);
+    panel.appendChild(btn);
+    return btn;
+  };
+
+  addButton("Next Level", () => monsters?.skipToNextLevel());
+  // Bosses only spawn into an empty field, so clearing is the fastest way in
+  addButton("Clear", () => monsters?.devClear());
+  addButton("+Spider", () => monsters?.devSpawn("snarl"));
+  addButton("+Boss", () => monsters?.devSpawn("boss"));
+  addButton("+Queen", () => monsters?.devSpawn("queen"));
+
+  let invincible = false;
+  const shield = addButton("Cards: normal", () => {
+    invincible = !invincible;
+    shield.textContent = invincible ? "Cards: invincible" : "Cards: normal";
+    (window as any).__upgradeAbsorbDamage = invincible
+      ? () => 0
+      : (dmg: number) => upgrades!.absorbDamage(dmg);
   });
 
-  panel.appendChild(btn);
   document.body.appendChild(panel);
 }
 

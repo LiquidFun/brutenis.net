@@ -3,7 +3,7 @@ export interface Vec2 {
   y: number;
 }
 
-interface RopePoint {
+export interface RopePoint {
   x: number;
   y: number;
   prevX: number;
@@ -49,6 +49,12 @@ export class VerletRope {
     // Verlet integration for free points
     for (let i = 1; i < this.points.length; i++) {
       const p = this.points[i];
+      // Pinned mid-rope points (spider webs) must not drift under gravity
+      if (p.locked) {
+        p.prevX = p.x;
+        p.prevY = p.y;
+        continue;
+      }
       const vx = (p.x - p.prevX) * this.damping;
       const vy = (p.y - p.prevY) * this.damping;
 

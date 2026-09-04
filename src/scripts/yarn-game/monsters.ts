@@ -26,6 +26,24 @@ const SHIELDED_SCORE = 5;
 const SHIELDED_SHIELD_COLOR = "#7f8c8d";
 const SHIELDED_SHIELD_GLOW = "#ecf0f1";
 
+const SNARL_FIRST_LEVEL = 11;
+const SNARL_MAX_ALIVE = 2; // from level 12 on; level 11 raises it to teach
+const SNARL_SCORE = 3;
+const SNARL_SEEK_RANGE = 140; // how close to the yarn it must get to spin a web
+const SNARL_ATTACH_RANGE = 170; // how far the web itself can reach for yarn
+// It plants itself and telegraphs for this long before the web fires, drawing
+// the exact reach — long enough to swing your yarn clear, or to squash it.
+const SNARL_WINDUP = 0.6;
+const SNARL_WEB_LIFETIME = 5;
+const SNARL_RETRY_COOLDOWN = 2.5;
+// Silk reads against the cream page background, so it is mid-grey rather than
+// white — same reason the Queen's cage strands are purple.
+const SNARL_COLORS = [
+  { body: "#1e1b2e", eye: "#f1c40f", leg: "#4a3f6b", web: "#7f8c8d" },
+  { body: "#2d1b1b", eye: "#e74c3c", leg: "#6b3f3f", web: "#96786f" },
+];
+const SNARL_STRAIN_WARN = "#e74c3c"; // silk glows red as it's about to snap
+
 const BOSS_FIRST_LEVEL = 10;
 const BOSS_SCORE = 25;
 const BOSS_HP = 12;
@@ -42,6 +60,49 @@ const BOSS_COLORS = [
   { body: "#4a0e4e", eye: "#e74c3c", wing: "#8e44ad", accent: "#d4ac0d" },
   { body: "#1b2631", eye: "#f39c12", wing: "#5b2c6f", accent: "#c0392b" },
 ];
+
+// ── Loom Queen (level 15) ──
+// Caged behind rotating web strands: cut them all to expose her, then burst
+// her down before she re-spins the cage.
+const QUEEN_LEVEL = 15;
+const QUEEN_SCORE = 40;
+const QUEEN_HP = 15; // 3 capped windows of 3, then a 6 HP unravelled phase
+const QUEEN_SIZE = 80;
+const QUEEN_PHASE2_HP = 12;
+const QUEEN_PHASE3_HP = 6;
+// She recoils between hits, so parking the ball on her is not free damage —
+// the fight is about re-opening the cage, not about grinding contact.
+const QUEEN_INVULN = 0.7;
+const QUEEN_EXPEL_FORCE = 2600; // the cage snapping taut throws caught yarn out
+// She only ever gives up this many hits before slamming a fresh cage shut. The
+// fight is therefore a fixed number of cut-dive-strike cycles, which is what
+// stops "hold the ball on her and wait" from being a winning line.
+const QUEEN_HITS_PER_WINDOW = 3;
+// Her strands snare the yarn exactly like a Snarl's web — the mechanic level 11
+// teaches. This is what makes idly grinding the ball against the cage a losing
+// habit: you spend the fight stuck to it instead of getting inside.
+const QUEEN_SNARE_TIME = 1.2;
+const QUEEN_SNARE_COOLDOWN = 1.5; // across the whole cage, so it stays fair
+const QUEEN_WALL_COUNT = 3;
+const QUEEN_WALL_HP = 2;
+const QUEEN_WALL_DIST = 145; // cage inradius on a roomy viewport
+const QUEEN_CAGE_MAX_FRAC = 0.19; // ...but never more than this of the short side
+const QUEEN_CAGE_OVERLAP = 1.06; // strand overshoot so the corners visibly meet
+const QUEEN_STRAND_THICKNESS = 7; // collision half-width of a cage strand
+const QUEEN_WALL_RESPIN = 4; // exposed window before the cage comes back
+const QUEEN_CAGE_SPIN = 0.35; // rad/s
+const QUEEN_SPREAD_COOLDOWN = 2.2;
+const QUEEN_RING_COOLDOWN = 6;
+const QUEEN_RING_COUNT = 8;
+const QUEEN_ADD_INTERVAL = 5;
+const QUEEN_MAX_ADDS = 2;
+const QUEEN_COLORS = {
+  body: "#2c1338", eye: "#f5b7b1", leg: "#5b2c6f",
+  accent: "#f7dc6f", rage: "#e74c3c",
+  strand: "#7d3c98", // cage silk — must stand out on the cream background
+  strandHit: "#f7dc6f", // a strand flaring as the ball cuts it
+  ring: "#9b59b6", // phase 2 ring-burst projectiles
+};
 
 const MAX_CARD_HP = 5;
 const DAMAGE_PER_SECOND = 0.5;
@@ -206,6 +267,26 @@ function addDestroyedLabel(el: Element) {
   html.appendChild(label);
 }
 
+/** Boss health bar, drawn in the boss's translated pixel-art space. */
+function drawHpBar(
+  px: (x: number, y: number, w: number, h: number) => void,
+  ctx: CanvasRenderingContext2D,
+  s: number, p: number, frac: number,
+) {
+  const w = s * 2;
+  const h = p * 1.2;
+  const y = s * 1.2;
+  ctx.fillStyle = "#2c3e50";
+  px(-w / 2, y, w, h);
+  ctx.fillStyle = frac > 0.5 ? "#8e44ad" : frac > 0.25 ? "#e67e22" : "#e74c3c";
+  px(-w / 2, y, w * frac, h);
+  ctx.fillStyle = "#ecf0f1";
+  px(-w / 2 - 1, y - 1, 1, h + 2);
+  px(w / 2, y - 1, 1, h + 2);
+  px(-w / 2, y - 1, w, 1);
+  px(-w / 2, y + h, w, 1);
+}
+
 // ── Types ──
 
 interface Particle {
@@ -221,6 +302,15 @@ interface Projectile {
   color: string;
 }
 
+type MonsterKind = "moth" | "shooter" | "shielded" | "boss" | "snarl" | "queen";
+
+/** One strand of the Loom Queen's cage, stored as an angle around her. */
+interface WebWall {
+  angle: number;
+  hp: number;
+  flash: number;
+}
+
 interface Monster {
   x: number; y: number; vx: number; vy: number;
   targetT: number; targetX: number; targetY: number;
@@ -228,8 +318,10 @@ interface Monster {
   colorIdx: number; wingPhase: number;
   alive: boolean; spawnAnim: number;
   eatingTimer: number; targetEl: Element | null;
-  hp: number; isBig: boolean; isHuge: boolean; flashTimer: number;
+  hp: number; maxHp: number; isBig: boolean; isHuge: boolean; flashTimer: number;
   id: string;
+  kind: MonsterKind;
+  scoreValue: number;
   isShooter: boolean;
   orbitAngle: number;
   shootCooldown: number;
@@ -244,9 +336,159 @@ interface Monster {
   bossBurstsFired: number; // how many bursts fired in current machine gun volley
   bossWanderTarget: { x: number; y: number } | null;
   bossWanderTimer: number;
+  isSnarl: boolean;
+  snarlAttached: boolean;
+  snarlTimer: number;
+  snarlStrain: number;
+  snarlLeashX: number;
+  snarlLeashY: number;
+  snarlWindup: number;
+  isQueen: boolean;
+  queenWalls: WebWall[];
+  queenSpin: number;
+  queenRespinTimer: number;
+  queenRingTimer: number;
+  queenAddTimer: number;
+  queenHitsThisWindow: number;
+  queenSnareTimer: number;
+  queenSnareCooldown: number;
+}
+
+interface SpawnTarget { x: number; y: number; t: number; el: Element }
+
+const KILL_EVENTS: Record<MonsterKind, string> = {
+  moth: "kill_moth",
+  shooter: "kill_shooter",
+  shielded: "kill_shielded",
+  boss: "kill_boss",
+  snarl: "kill_snarl",
+  queen: "kill_queen",
+};
+
+/**
+ * How much of a card must be on screen before a monster will pick it as a
+ * target. Half, so a card barely peeking past an edge does not start a fight the
+ * player has to scroll to reach.
+ */
+const TARGETABLE_VISIBLE_FRACTION = 0.5;
+
+/** Off-screen markers: how far in from the viewport edge they sit, and their size. */
+const OFFSCREEN_MARGIN = 14;
+const OFFSCREEN_DOT = 5;
+/** Beyond this distance past the edge a marker stops fading further out. */
+const OFFSCREEN_FADE_DIST = 600;
+
+/** Palette a monster bursts into when it dies. */
+function deathColors(m: Monster): { body: string; eye: string; trim: string } {
+  if (m.isQueen) return { body: QUEEN_COLORS.body, eye: QUEEN_COLORS.eye, trim: QUEEN_COLORS.accent };
+  if (m.isSnarl) {
+    const c = SNARL_COLORS[m.colorIdx];
+    return { body: c.body, eye: c.eye, trim: c.leg };
+  }
+  if (m.isBoss) {
+    const c = BOSS_COLORS[m.colorIdx];
+    return { body: c.body, eye: c.eye, trim: c.accent };
+  }
+  if (m.isShooter) {
+    const c = SHOOTER_COLORS[m.colorIdx];
+    return { body: c.body, eye: c.eye, trim: c.ring };
+  }
+  const c = MONSTER_COLORS[m.colorIdx];
+  return { body: c.body, eye: c.eye, trim: c.wing };
 }
 
 let monsterIdCounter = 0;
+/** How many webs the player has torn free — the tutorial hint stops after one. */
+let snarlSnapCount = 0;
+
+/**
+ * Single construction point for every monster — the behaviour branches below
+ * still read the `is*` booleans, but only this factory decides them.
+ */
+function createMonster(
+  kind: MonsterKind,
+  x: number, y: number,
+  target: SpawnTarget | null,
+  over: Partial<Monster> = {},
+): Monster {
+  const size = over.size ?? 24;
+  const hp = over.hp ?? 1;
+  return {
+    x, y, vx: 0, vy: 0,
+    targetT: target?.t ?? 0, targetX: target?.x ?? x, targetY: target?.y ?? y,
+    targetEl: target?.el ?? null,
+    size, hitRadius: size * 2.0,
+    colorIdx: 0, wingPhase: Math.random() * Math.PI * 2,
+    alive: true, spawnAnim: 0, eatingTimer: 0,
+    hp, maxHp: hp, isBig: false, isHuge: false, flashTimer: 0,
+    id: `m${monsterIdCounter++}`,
+    kind, scoreValue: 1,
+    isShooter: kind === "shooter", orbitAngle: 0, shootCooldown: 0,
+    isShielded: kind === "shielded", shieldSegments: 0, shieldFlash: new Array(8).fill(0),
+    isBoss: kind === "boss" || kind === "queen",
+    bossOpenSegment: 0, bossInvulnTimer: 0, bossAttackTimer: 0,
+    bossPhase2Cycle: 0, bossBurstsFired: 0,
+    bossWanderTarget: null, bossWanderTimer: 0,
+    isSnarl: kind === "snarl",
+    snarlAttached: false, snarlTimer: 0, snarlStrain: 0,
+    snarlLeashX: x, snarlLeashY: y, snarlWindup: 0,
+    isQueen: kind === "queen",
+    queenWalls: [], queenSpin: 0, queenRespinTimer: 0,
+    queenRingTimer: 0, queenAddTimer: 0, queenHitsThisWindow: 0,
+    queenSnareTimer: 0, queenSnareCooldown: 0,
+    ...over,
+  };
+}
+
+// ── Per-level overrides ──
+// Levels not listed here use the default mixed spawn table and the banner
+// cascade in `bannerFor`.
+
+interface LevelRule {
+  /** This level is a boss fight — nothing else spawns until it is beaten. */
+  boss?: "boss" | "queen";
+  /** Spawn this kind instead of rolling the normal table... */
+  featured?: MonsterKind;
+  /** ...this often. 1 (the default) means exclusively. */
+  featuredChance?: number;
+  /** Cap on concurrent monsters; exact for boss levels, a ceiling otherwise. */
+  maxMonsters?: number;
+  maxMonstersMobile?: number;
+  /** Floor on the spawn interval, in seconds. */
+  minSpawnInterval?: number;
+  /** Overrides the usual 2-spider cap. */
+  maxSnarls?: number;
+  banner?: string;
+}
+
+const LEVEL_RULES: Record<number, LevelRule> = {
+  5: { banner: "Ranged enemies spotted!" },
+  6: { banner: "Bigger creatures approaching..." },
+  7: {
+    featured: "shielded", maxMonsters: 3, maxMonstersMobile: 2, minSpawnInterval: 3,
+    banner: "Shielded foes! Hit them from behind!",
+  },
+  10: { boss: "boss", maxMonsters: 1, minSpawnInterval: 1, banner: "BOSS! Find the opening in its shield!" },
+  // Spider debut. Mostly spiders so the mechanic gets room to teach itself, but
+  // a couple of moths still chew on the cards — that is what makes being pinned
+  // feel like a threat instead of a curiosity.
+  11: {
+    featured: "snarl", featuredChance: 0.8, maxSnarls: 3,
+    maxMonsters: 5, maxMonstersMobile: 3, minSpawnInterval: 1.4,
+    banner: "Spiders! They pin your yarn — shake them off!",
+  },
+  15: { boss: "queen", maxMonsters: 1, minSpawnInterval: 1, banner: "THE LOOM QUEEN! Cut her cage to reach her!" },
+};
+
+function bannerFor(level: number): string {
+  const rule = LEVEL_RULES[level];
+  if (rule?.banner) return rule.banner;
+  if (level > QUEEN_LEVEL) return "The swarm thickens...";
+  if (level >= SNARL_FIRST_LEVEL) return "Spiders on the prowl!";
+  if (level >= BOSS_FIRST_LEVEL) return "Colossal beasts incoming!";
+  if (level >= SHIELDED_FIRST_LEVEL) return "Shielded foes! Hit them from behind!";
+  return "They're getting faster...";
+}
 
 // ── Persistence ──
 
@@ -398,8 +640,48 @@ export class MonsterManager {
     return best;
   }
 
-  private findTarget(): { x: number; y: number; t: number; el: Element } | null {
-    const cards = this.getAliveCards();
+  /**
+   * Alive cards that are at least half on screen.
+   *
+   * The comparison is against `min(card size, viewport size)` on each axis so a
+   * card taller than the viewport still counts once it fills it — otherwise it
+   * could never reach the fraction and would be permanently untargetable on a
+   * small screen.
+   */
+  private getVisibleAliveCards(): Element[] {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    return this.getAliveCards().filter((el) => {
+      const r = getCachedRect(el);
+      if (r.width <= 0 || r.height <= 0) return false;
+      const visibleW = Math.min(r.right, vw) - Math.max(r.left, 0);
+      const visibleH = Math.min(r.bottom, vh) - Math.max(r.top, 0);
+      return (
+        visibleW >= Math.min(r.width, vw) * TARGETABLE_VISIBLE_FRACTION &&
+        visibleH >= Math.min(r.height, vh) * TARGETABLE_VISIBLE_FRACTION
+      );
+    });
+  }
+
+  /**
+   * Picks the card a new monster will go after, and the spot on its perimeter.
+   *
+   * Restricted to cards on screen at the moment of spawning: a monster sent
+   * after something three screens down is a fight the player cannot see, let
+   * alone win. The choice is then fixed for that monster's life — it keeps
+   * `targetEl`, and scrolling moves monsters with the page, so it stays on the
+   * card it set out for.
+   *
+   * When nothing visible is left alive the restriction lifts and any surviving
+   * card is fair game, so the level cannot stall with monsters that have nowhere
+   * to go.
+   *
+   * Also used by retarget() after a client-side navigation, which is what keeps
+   * a tab switch pointing monsters at cards on the page you just opened.
+   */
+  private findTarget(): SpawnTarget | null {
+    const visible = this.getVisibleAliveCards();
+    const cards = visible.length > 0 ? visible : this.getAliveCards();
     if (cards.length === 0) return null;
     const card = cards[Math.floor(Math.random() * cards.length)];
     const rect = getCachedRect(card);
@@ -419,44 +701,144 @@ export class MonsterManager {
     }
   }
 
-  private spawnShielded(target: { x: number; y: number; t: number; el: Element }) {
-    const pos = this.spawnOffScreen();
-    const segments = [1, 3, 5, 7][Math.floor(Math.random() * 4)];
-    this.monsters.push({
-      x: pos.x, y: pos.y, vx: 0, vy: 0,
-      targetT: target.t, targetX: target.x, targetY: target.y,
-      size: 38, hitRadius: 76,
+  private spawnShielded(target: SpawnTarget, at?: { x: number; y: number }) {
+    const pos = at ?? this.spawnOffScreen();
+    this.monsters.push(createMonster("shielded", pos.x, pos.y, target, {
+      size: 38, hp: 1, isBig: true, scoreValue: SHIELDED_SCORE,
       colorIdx: Math.floor(Math.random() * MONSTER_COLORS.length),
-      wingPhase: Math.random() * Math.PI * 2,
-      alive: true, spawnAnim: 0, eatingTimer: 0, targetEl: target.el,
-      hp: 1, isBig: true, isHuge: false, flashTimer: 0,
-      id: `m${monsterIdCounter++}`,
-      isShooter: false, orbitAngle: 0, shootCooldown: 0,
-      isShielded: true, shieldSegments: segments, shieldFlash: new Array(8).fill(0),
-      isBoss: false, bossOpenSegment: 0, bossInvulnTimer: 0,
-      bossAttackTimer: 0, bossPhase2Cycle: 0, bossBurstsFired: 0,
-      bossWanderTarget: null, bossWanderTimer: 0,
-    });
+      shieldSegments: [1, 3, 5, 7][Math.floor(Math.random() * 4)],
+    }));
   }
 
-  private spawnBoss(target: { x: number; y: number; t: number; el: Element }) {
+  private spawnShooter(target: SpawnTarget, at?: { x: number; y: number }) {
+    const pos = at ?? this.spawnOffScreen();
+    this.monsters.push(createMonster("shooter", pos.x, pos.y, target, {
+      size: 34, hp: 2,
+      colorIdx: Math.floor(Math.random() * SHOOTER_COLORS.length),
+      orbitAngle: Math.random() * Math.PI * 2,
+      shootCooldown: SHOOTER_COOLDOWN,
+    }));
+  }
+
+  private spawnSnarl(target: SpawnTarget, at?: { x: number; y: number }) {
+    const pos = at ?? this.spawnOffScreen();
+    this.monsters.push(createMonster("snarl", pos.x, pos.y, target, {
+      size: 22, hp: 1, scoreValue: SNARL_SCORE,
+      colorIdx: Math.floor(Math.random() * SNARL_COLORS.length),
+    }));
+  }
+
+  private spawnKind(kind: MonsterKind, target: SpawnTarget, at?: { x: number; y: number }) {
+    switch (kind) {
+      case "queen": this.spawnQueen(target); break;
+      case "boss": this.spawnBoss(target); break;
+      case "snarl": this.spawnSnarl(target, at); break;
+      case "shielded": this.spawnShielded(target, at); break;
+      case "shooter": this.spawnShooter(target, at); break;
+      case "moth": this.spawnMoth(target, at); break;
+    }
+  }
+
+  private spawnBoss(target: SpawnTarget) {
     const pos = this.spawnOffScreen();
-    const openSeg = Math.floor(Math.random() * 8);
-    this.monsters.push({
-      x: pos.x, y: pos.y, vx: 0, vy: 0,
-      targetT: target.t, targetX: target.x, targetY: target.y,
-      size: BOSS_SIZE, hitRadius: BOSS_SIZE * 2.0,
+    this.monsters.push(createMonster("boss", pos.x, pos.y, target, {
+      size: BOSS_SIZE, hp: BOSS_HP, isBig: true, isHuge: true, scoreValue: BOSS_SCORE,
       colorIdx: Math.floor(Math.random() * BOSS_COLORS.length),
-      wingPhase: Math.random() * Math.PI * 2,
-      alive: true, spawnAnim: 0, eatingTimer: 0, targetEl: target.el,
-      hp: BOSS_HP, isBig: true, isHuge: true, flashTimer: 0,
-      id: `m${monsterIdCounter++}`,
-      isShooter: false, orbitAngle: 0, shootCooldown: 0,
-      isShielded: false, shieldSegments: 0, shieldFlash: new Array(8).fill(0),
-      isBoss: true, bossOpenSegment: openSeg, bossInvulnTimer: 0,
-      bossAttackTimer: BOSS_PHASE1_COOLDOWN, bossPhase2Cycle: 0, bossBurstsFired: 0,
-      bossWanderTarget: null, bossWanderTimer: 0,
+      bossOpenSegment: Math.floor(Math.random() * 8),
+      bossAttackTimer: BOSS_PHASE1_COOLDOWN,
+    }));
+  }
+
+  private spawnQueen(target: SpawnTarget) {
+    const pos = this.spawnOffScreen();
+    const queen = createMonster("queen", pos.x, pos.y, target, {
+      size: QUEEN_SIZE, hp: QUEEN_HP, isBig: true, isHuge: true, scoreValue: QUEEN_SCORE,
+      // Just her body, well inside the cage radius. The yarn ball trails its
+      // cursor by a fair margin, so a roomier hurtbox let a single circling
+      // motion cut strands and land hits at the same time — which made
+      // "grind the ball along the cage" strictly the best strategy.
+      hitRadius: QUEEN_SIZE * 0.6,
+      bossAttackTimer: QUEEN_SPREAD_COOLDOWN,
+      queenRingTimer: QUEEN_RING_COOLDOWN,
+      queenAddTimer: QUEEN_ADD_INTERVAL,
     });
+    this.spinCage(queen);
+    this.monsters.push(queen);
+  }
+
+  /** (Re)build the Loom Queen's ring of web strands at a fresh orientation. */
+  private spinCage(q: Monster) {
+    const base = Math.random() * Math.PI * 2;
+    q.queenWalls = [];
+    for (let i = 0; i < QUEEN_WALL_COUNT; i++) {
+      q.queenWalls.push({
+        angle: base + (i / QUEEN_WALL_COUNT) * Math.PI * 2,
+        hp: QUEEN_WALL_HP,
+        // Flare on materialising, so a cage re-forming is unmissable
+        flash: 0.25,
+      });
+    }
+    q.queenRespinTimer = 0;
+    q.queenHitsThisWindow = 0;
+    this.expelFromCage(q);
+  }
+
+  private cageRadius(): number {
+    return Math.min(
+      QUEEN_WALL_DIST,
+      Math.min(window.innerWidth, window.innerHeight) * QUEEN_CAGE_MAX_FRAC,
+    );
+  }
+
+  /**
+   * Silk snapping taut throws any yarn caught inside back out. Without this a
+   * player can simply park the ball in orbit and let each new cage form around
+   * them, which turns the whole fight into "hold still and win".
+   */
+  private expelFromCage(q: Monster) {
+    const getBalls = (window as any).__yarnCursorGetAllBallPositions;
+    const impulse = (window as any).__yarnCursorApplyImpulse;
+    if (!getBalls || !impulse) return;
+    const r = this.cageRadius();
+    for (const b of getBalls()) {
+      const dx = b.x - q.x;
+      const dy = b.y - q.y;
+      const d = Math.hypot(dx, dy);
+      if (d > r) continue;
+      const nx = d > 0 ? dx / d : 1;
+      const ny = d > 0 ? dy / d : 0;
+      impulse(b.x, b.y, nx * QUEEN_EXPEL_FORCE, ny * QUEEN_EXPEL_FORCE);
+      for (let i = 0; i < 12; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 80 + Math.random() * 160;
+        this.particles.push({
+          x: b.x, y: b.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          life: 0.4, maxLife: 0.4, size: 2 + Math.random() * 3,
+          color: Math.random() < 0.5 ? QUEEN_COLORS.strand : QUEEN_COLORS.accent,
+        });
+      }
+    }
+  }
+
+  /**
+   * World-space endpoints of one cage strand. The strands are the sides of a
+   * regular polygon with the queen at its centre, so a full cage genuinely
+   * encloses her — the ball cannot slip through a corner and hit an
+   * invulnerable target with no feedback.
+   */
+  private wallSegment(q: Monster, w: WebWall) {
+    const r = this.cageRadius();
+    const half = r * Math.tan(Math.PI / QUEEN_WALL_COUNT) * QUEEN_CAGE_OVERLAP;
+    const a = w.angle + q.queenSpin;
+    const cx = q.x + Math.cos(a) * r;
+    const cy = q.y + Math.sin(a) * r;
+    const px = -Math.sin(a) * half;
+    const py = Math.cos(a) * half;
+    return { x1: cx - px, y1: cy - py, x2: cx + px, y2: cy + py };
+  }
+
+  private cageIsUp(q: Monster): boolean {
+    return q.queenWalls.some(w => w.hp > 0);
   }
 
   spawn() {
@@ -465,16 +847,29 @@ export class MonsterManager {
     const target = this.findTarget();
     if (!target) return;
 
-    // Level 10: boss only (spawn one boss, no other enemies)
-    if (this.level === BOSS_FIRST_LEVEL) {
+    const rule = LEVEL_RULES[this.level];
+    if (rule?.boss) {
+      // One at a time; the fight spawns its own adds
       if (this.monsters.some(m => m.isBoss && m.alive)) return;
-      this.spawnBoss(target);
+      this.spawnKind(rule.boss, target);
       return;
     }
 
-    // Level 7: only shielded enemies
-    if (this.level === SHIELDED_FIRST_LEVEL) {
-      this.spawnShielded(target);
+    const snarlCap = rule?.maxSnarls ?? SNARL_MAX_ALIVE;
+    const snarlsAlive = this.monsters.reduce((n, m) => n + (m.isSnarl && m.alive ? 1 : 0), 0);
+
+    // A featured kind crowds out the normal table; spiders still respect their
+    // cap, falling through to an ordinary spawn once the web is full
+    if (rule?.featured && Math.random() < (rule.featuredChance ?? 1)) {
+      if (rule.featured !== "snarl" || snarlsAlive < snarlCap) {
+        this.spawnKind(rule.featured, target);
+        return;
+      }
+    }
+
+    // Steady trickle of spiders from level 12 on
+    if (this.level > SNARL_FIRST_LEVEL && snarlsAlive < snarlCap && Math.random() < 0.2) {
+      this.spawnSnarl(target);
       return;
     }
 
@@ -489,26 +884,14 @@ export class MonsterManager {
       ? Math.max(0.2, 0.5 - (this.level - SHOOTER_FIRST_LEVEL) * 0.06)
       : 0;
     if (Math.random() < shooterChance) {
-      const pos = this.spawnOffScreen();
-      this.monsters.push({
-        x: pos.x, y: pos.y, vx: 0, vy: 0,
-        targetT: target.t, targetX: target.x, targetY: target.y,
-        size: 34, hitRadius: 68,
-        colorIdx: Math.floor(Math.random() * SHOOTER_COLORS.length),
-        wingPhase: Math.random() * Math.PI * 2,
-        alive: true, spawnAnim: 0, eatingTimer: 0, targetEl: target.el,
-        hp: 2, isBig: false, isHuge: false, flashTimer: 0,
-        id: `m${monsterIdCounter++}`,
-        isShooter: true, orbitAngle: Math.random() * Math.PI * 2,
-        shootCooldown: SHOOTER_COOLDOWN,
-        isShielded: false, shieldSegments: 0, shieldFlash: [],
-        isBoss: false, bossOpenSegment: 0, bossInvulnTimer: 0,
-        bossAttackTimer: 0, bossPhase2Cycle: 0, bossBurstsFired: 0,
-        bossWanderTarget: null, bossWanderTimer: 0,
-      });
+      this.spawnShooter(target);
       return;
     }
 
+    this.spawnMoth(target);
+  }
+
+  private spawnMoth(target: SpawnTarget, at?: { x: number; y: number }) {
     const canSpawnBig = this.level >= 6;
     const canSpawnHuge = this.level >= 10;
     const roll = Math.random();
@@ -527,29 +910,128 @@ export class MonsterManager {
       hp = 1;
     }
 
-    const pos = this.spawnOffScreen();
-
-    this.monsters.push({
-      x: pos.x, y: pos.y, vx: 0, vy: 0,
-      targetT: target.t, targetX: target.x, targetY: target.y,
-      size, hitRadius: size * 2.0,
+    const pos = at ?? this.spawnOffScreen();
+    this.monsters.push(createMonster("moth", pos.x, pos.y, target, {
+      size, hp, isBig: isBig || isHuge, isHuge,
       colorIdx: Math.floor(Math.random() * MONSTER_COLORS.length),
-      wingPhase: Math.random() * Math.PI * 2,
-      alive: true, spawnAnim: 0, eatingTimer: 0, targetEl: target.el,
-      hp, isBig: isBig || isHuge, isHuge, flashTimer: 0,
-      id: `m${monsterIdCounter++}`,
-      isShooter: false, orbitAngle: 0, shootCooldown: 0,
-      isShielded: false, shieldSegments: 0, shieldFlash: [],
-      isBoss: false, bossOpenSegment: 0, bossInvulnTimer: 0,
-      bossAttackTimer: 0, bossPhase2Cycle: 0, bossBurstsFired: 0,
-      bossWanderTarget: null, bossWanderTimer: 0,
+    }));
+  }
+
+  /** Drop any web this monster is holding on the player's yarn. */
+  private releaseWeb(m: Monster) {
+    const release = (window as any).__yarnCursorReleaseWeb;
+    if (m.isSnarl && m.snarlAttached) {
+      m.snarlAttached = false;
+      if (release) release(m.id);
+    }
+    if (m.isQueen && m.queenSnareTimer > 0) {
+      m.queenSnareTimer = 0;
+      if (release) release(`${m.id}-snare`);
+    }
+  }
+
+  /** Single death path: score, event, particles, cleanup. (nx, ny) = blast direction. */
+  private killMonster(m: Monster, nx: number, ny: number) {
+    m.alive = false;
+    this.releaseWeb(m);
+    if (m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
+
+    this.score += m.scoreValue;
+    const et = (window as any).__gameEventTracker;
+    if (et) et.record({
+      event_type: KILL_EVENTS[m.kind],
+      payload: { score_delta: m.scoreValue, running_score: this.score, running_level: this.level },
     });
+
+    // Boss kill: immediately advance to next level
+    if (m.isBoss) {
+      const nextIdx = this.levelThresholds.findIndex(t => this.score < t);
+      if (nextIdx >= 0) this.score = this.levelThresholds[nextIdx];
+    }
+
+    const c = deathColors(m);
+    const count = m.isBoss ? 60 : m.isHuge ? 40 : m.isBig ? 28 : 18;
+    for (let i = 0; i < count; i++) {
+      const spread = (Math.random() - 0.5) * Math.PI * 0.8;
+      const angle = Math.atan2(ny, nx) + spread;
+      const speed = 200 + Math.random() * 400;
+      const life = 0.6 + Math.random() * 0.6;
+      this.particles.push({
+        x: m.x + (Math.random() - 0.5) * m.size * 0.5,
+        y: m.y + (Math.random() - 0.5) * m.size * 0.5,
+        vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
+        life, maxLife: life,
+        size: m.isBoss ? 5 + Math.random() * 10 : m.isHuge ? 4 + Math.random() * 8 : m.isBig ? 3 + Math.random() * 6 : 2 + Math.random() * 5,
+        color: [c.body, c.trim, c.eye, "#ecf0f1"][Math.floor(Math.random() * 4)],
+      });
+    }
+  }
+
+  /** Ball vs one cage strand. Returns true if it made contact. */
+  private hitWebWall(q: Monster, w: WebWall, bx: number, by: number, r: number): boolean {
+    const { x1, y1, x2, y2 } = this.wallSegment(q, w);
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const lenSq = dx * dx + dy * dy;
+    const t = lenSq > 0
+      ? Math.max(0, Math.min(1, ((bx - x1) * dx + (by - y1) * dy) / lenSq))
+      : 0;
+    const cx = x1 + dx * t;
+    const cy = y1 + dy * t;
+    const ox = bx - cx;
+    const oy = by - cy;
+    const reach = r + QUEEN_STRAND_THICKNESS;
+    const distSq = ox * ox + oy * oy;
+    if (distSq > reach * reach) return false;
+
+    const dist = Math.sqrt(distSq) || 1;
+    const nx = ox / dist;
+    const ny = oy / dist;
+    // flash doubles as a per-strand hit cooldown so one pass can't shred it
+    if (w.flash <= 0) {
+      w.hp--;
+      w.flash = 0.3;
+      const c = QUEEN_COLORS;
+      for (let i = 0; i < 10; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 60 + Math.random() * 120;
+        this.particles.push({
+          x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          life: 0.35, maxLife: 0.35, size: 2 + Math.random() * 3,
+          color: Math.random() < 0.5 ? c.strand : c.accent,
+        });
+      }
+    }
+    const impulse = (window as any).__yarnCursorApplyImpulse;
+    if (impulse) impulse(bx, by, nx * 1800, ny * 1800);
+
+    if (q.queenSnareCooldown <= 0 && q.queenSnareTimer <= 0) {
+      const attach = (window as any).__yarnCursorAttachWeb;
+      if (attach && attach(`${q.id}-snare`, cx, cy, 200)) {
+        q.queenSnareTimer = QUEEN_SNARE_TIME;
+        q.queenSnareCooldown = QUEEN_SNARE_COOLDOWN;
+      }
+    }
+    return true;
   }
 
   checkYarnBallHit(ballX: number, ballY: number, ballRadius: number): number {
     let hits = 0;
     for (const m of this.monsters) {
-      if (!m.alive || m.flashTimer > 0) continue;
+      if (!m.alive) continue;
+
+      // The Loom Queen's cage blocks the ball before anything else
+      if (m.isQueen) {
+        let caged = false;
+        for (const w of m.queenWalls) {
+          if (w.hp <= 0) continue;
+          if (this.hitWebWall(m, w, ballX, ballY, ballRadius)) { hits++; }
+          caged = true;
+        }
+        if (caged) continue; // untouchable until every strand is cut
+      }
+
+      if (m.flashTimer > 0) continue;
       // Boss invulnerability window
       if (m.isBoss && m.bossInvulnTimer > 0) continue;
       const dx = m.x - ballX;
@@ -562,7 +1044,7 @@ export class MonsterManager {
         const ny = dist > 0 ? dy / dist : -1;
 
         // Boss shield check: 7/8 segments active, 1 open
-        if (m.isBoss) {
+        if (m.kind === "boss") {
           const hitAngle = Math.atan2(ballY - m.y, ballX - m.x);
           let norm = ((hitAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
           const segIdx = Math.floor((norm + Math.PI / 8) / (Math.PI / 4)) % 8;
@@ -606,48 +1088,27 @@ export class MonsterManager {
         const dmgMul = (window as any).__upgradeDamageMultiplier;
         m.hp -= dmgMul ? dmgMul() : 1;
 
-        const c = m.isBoss ? BOSS_COLORS[m.colorIdx]
-          : m.isShooter ? SHOOTER_COLORS[m.colorIdx] : MONSTER_COLORS[m.colorIdx];
-
         if (m.hp <= 0) {
-          m.alive = false;
-          if (m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
-          const scoreDelta = m.isBoss ? BOSS_SCORE : m.isShielded ? SHIELDED_SCORE : 1;
-          this.score += scoreDelta;
-          const et = (window as any).__gameEventTracker;
-          if (et) et.record({
-            event_type: m.isBoss ? "kill_boss" : m.isShielded ? "kill_shielded" : m.isShooter ? "kill_shooter" : "kill_moth",
-            payload: { score_delta: scoreDelta, running_score: this.score, running_level: this.level },
-          });
-          // Boss kill: immediately advance to next level
-          if (m.isBoss) {
-            const nextIdx = this.levelThresholds.findIndex(t => this.score < t);
-            if (nextIdx >= 0) this.score = this.levelThresholds[nextIdx];
-          }
+          this.killMonster(m, nx, ny);
           hits++;
-          const count = m.isBoss ? 60 : m.isHuge ? 40 : m.isBig ? 28 : 18;
-          for (let i = 0; i < count; i++) {
-            const spread = (Math.random() - 0.5) * Math.PI * 0.8;
-            const angle = Math.atan2(ny, nx) + spread;
-            const speed = 200 + Math.random() * 400;
-            const life = 0.6 + Math.random() * 0.6;
-            this.particles.push({
-              x: m.x + (Math.random() - 0.5) * m.size * 0.5,
-              y: m.y + (Math.random() - 0.5) * m.size * 0.5,
-              vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed,
-              life, maxLife: life, size: m.isBoss ? 5 + Math.random() * 10 : m.isHuge ? 4 + Math.random() * 8 : m.isBig ? 3 + Math.random() * 6 : 2 + Math.random() * 5,
-              color: [c.body, "accent" in c ? c.accent : ("ring" in c ? c.ring : c.wing), c.eye, "#ecf0f1"][Math.floor(Math.random() * 4)],
-            });
-          }
         } else {
           m.flashTimer = 0.3;
-          // Boss: become invulnerable and rotate opening
-          if (m.isBoss) {
+          const c = deathColors(m);
+          // Boss: become invulnerable and rotate opening. The Queen is exposed
+          // for a fixed window instead, so she gets no invulnerability here.
+          if (m.kind === "boss") {
             m.bossInvulnTimer = BOSS_INVULN_TIME;
             // Pick new random open segment (different from current)
             let newOpen = Math.floor(Math.random() * 8);
             while (newOpen === m.bossOpenSegment) newOpen = Math.floor(Math.random() * 8);
             m.bossOpenSegment = newOpen;
+          } else if (m.isQueen) {
+            m.bossInvulnTimer = QUEEN_INVULN;
+            // Enough hits landed — weave a fresh cage and throw the player out
+            if (++m.queenHitsThisWindow >= QUEEN_HITS_PER_WINDOW
+                && m.hp > QUEEN_PHASE3_HP) {
+              this.spinCage(m);
+            }
           }
           const force = m.isBoss ? 50 + Math.random() * 30 : m.isShooter ? 150 + Math.random() * 100 : m.isHuge ? 100 + Math.random() * 80 : 300 + Math.random() * 200;
           m.vx = nx * force; m.vy = ny * force;
@@ -748,6 +1209,18 @@ export class MonsterManager {
     }
   }
 
+  /** Dev only (cheat panel): wipe the field, releasing any webs it holds. */
+  devClear() {
+    for (const m of this.monsters) this.releaseWeb(m);
+    this.monsters.length = 0;
+  }
+
+  /** Dev only (cheat panel): force one monster into existence. */
+  devSpawn(kind: MonsterKind) {
+    const target = this.findTarget();
+    if (target) this.spawnKind(kind, target);
+  }
+
   skipToNextLevel() {
     const nextIdx = this.levelThresholds.findIndex(t => this.score < t);
     if (nextIdx >= 0) {
@@ -768,6 +1241,269 @@ export class MonsterManager {
     }
   }
 
+  /** Drift between random spots near the surviving cards. */
+  private wander(m: Monster, dt: number, speed: number) {
+    m.bossWanderTimer -= dt;
+    if (!m.bossWanderTarget || m.bossWanderTimer <= 0) {
+      const cards = this.getAliveCards();
+      if (cards.length > 0) {
+        const card = cards[Math.floor(Math.random() * cards.length)];
+        const rect = getCachedRect(card);
+        const margin = 180;
+        m.bossWanderTarget = {
+          x: rect.left + rect.width / 2 + (Math.random() - 0.5) * margin * 2,
+          y: rect.top + rect.height / 2 + (Math.random() - 0.5) * margin,
+        };
+        m.bossWanderTimer = 2 + Math.random() * 3;
+      }
+    }
+
+    if (m.bossWanderTarget) {
+      const dx = m.bossWanderTarget.x - m.x;
+      const dy = m.bossWanderTarget.y - m.y;
+      const distSq = dx * dx + dy * dy;
+      if (distSq > 100) {
+        const dist = Math.sqrt(distSq);
+        m.vx += (dx / dist) * speed * dt * 3;
+        m.vy += (dy / dist) * speed * dt * 3;
+        const spd = Math.sqrt(m.vx * m.vx + m.vy * m.vy);
+        if (spd > speed) { m.vx = (m.vx / spd) * speed; m.vy = (m.vy / spd) * speed; }
+      }
+    }
+    m.x += m.vx * dt; m.y += m.vy * dt;
+    m.vx *= 0.95; m.vy *= 0.95;
+  }
+
+  /** Fire a homing projectile from `m` toward `card` along `angle`. */
+  private fireProjectile(m: Monster, card: Element, angle: number, color: string, offset: number) {
+    this.projectiles.push({
+      x: m.x + Math.cos(angle) * offset,
+      y: m.y + Math.sin(angle) * offset,
+      targetEl: card,
+      shooterId: m.id,
+      life: 5,
+      color,
+    });
+  }
+
+  // ── Snarl: steals the player's yarn instead of chewing cards ──
+
+  private updateSnarl(m: Monster, dt: number) {
+    if (m.snarlAttached) {
+      const getInfo = (window as any).__yarnCursorWebInfo;
+      const info = getInfo ? getInfo(m.id) : null;
+      if (!info) {
+        // The yarn it was holding is gone (upgrade expired, page changed)
+        m.snarlAttached = false;
+        m.snarlTimer = SNARL_RETRY_COOLDOWN;
+        return;
+      }
+      // Sit on the anchor. On desktop that IS the pinned rope point; on mobile
+      // it's the fixed end of the leash, with the ball straining at the far end.
+      m.x = info.ax;
+      m.y = info.ay;
+      m.snarlLeashX = info.bx;
+      m.snarlLeashY = info.by;
+      m.snarlStrain = info.strain;
+
+      if (info.strain >= 1) {
+        // Whipped loose — the web snaps and takes the spider with it
+        snarlSnapCount++;
+        const dismiss = (window as any).__gameDismissHint;
+        if (dismiss) dismiss();
+        this.killMonster(m, (Math.random() - 0.5) * 2, -1);
+        return;
+      }
+
+      m.snarlTimer -= dt;
+      if (m.snarlTimer <= 0) {
+        // Let go before the player works it out, so nobody stays pinned forever
+        this.releaseWeb(m);
+        m.snarlTimer = SNARL_RETRY_COOLDOWN;
+      }
+      return;
+    }
+
+    // Winding up: it has committed to this spot and is drawing its reach. It no
+    // longer chases, so swinging the yarn out of the ring beats it outright.
+    if (m.snarlWindup > 0) {
+      m.snarlWindup -= dt;
+      m.x += m.vx * dt; m.y += m.vy * dt;
+      m.vx *= 0.82; m.vy *= 0.82;
+      if (m.snarlWindup <= 0) this.snarlFireWeb(m);
+      return;
+    }
+
+    m.snarlTimer -= dt;
+
+    const getBall = (window as any).__yarnCursorGetBallPos;
+    const ball = getBall ? getBall() : null;
+    if (!ball) {
+      m.x += m.vx * dt; m.y += m.vy * dt;
+      m.vx *= 0.95; m.vy *= 0.95;
+      return;
+    }
+
+    // Deliberately slower than the yarn ball: keep moving and it never catches you
+    const speed = 170 + this.level * 6;
+    const dx = ball.x - m.x;
+    const dy = ball.y - m.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    m.vx += (dx / dist) * speed * dt * 4;
+    m.vy += (dy / dist) * speed * dt * 4;
+    const spd = Math.hypot(m.vx, m.vy);
+    if (spd > speed) { m.vx = (m.vx / spd) * speed; m.vy = (m.vy / spd) * speed; }
+    m.x += m.vx * dt; m.y += m.vy * dt;
+    m.vx *= 0.96; m.vy *= 0.96;
+
+    if (m.snarlTimer <= 0 && dist <= SNARL_SEEK_RANGE) m.snarlWindup = SNARL_WINDUP;
+  }
+
+  /** End of the wind-up: grab whatever yarn is still inside the ring. */
+  private snarlFireWeb(m: Monster) {
+    const attach = (window as any).__yarnCursorAttachWeb;
+    const point = attach ? attach(m.id, m.x, m.y, SNARL_ATTACH_RANGE) : null;
+    if (!point) {
+      m.snarlTimer = SNARL_RETRY_COOLDOWN; // yarn got clear — it has to set up again
+      return;
+    }
+    m.snarlAttached = true;
+    m.snarlStrain = 0;
+    m.snarlTimer = SNARL_WEB_LIFETIME;
+    m.x = point.x;
+    m.y = point.y;
+    m.snarlLeashX = point.x;
+    m.snarlLeashY = point.y;
+    // Keep saying it until the player has actually torn one free
+    if (snarlSnapCount === 0) {
+      const showHint = (window as any).__gameShowHint;
+      if (showHint) showHint("Shake your yarn hard to tear the web!");
+    }
+  }
+
+  // ── Loom Queen: caged boss for level 15 ──
+
+  /**
+   * Cage bookkeeping. Runs even while she's flinching from a hit — otherwise a
+   * player who keeps landing hits freezes the respin timer and the cage never
+   * comes back.
+   */
+  private tickQueenCage(m: Monster, dt: number) {
+    m.queenSpin += QUEEN_CAGE_SPIN * dt;
+    for (const w of m.queenWalls) if (w.flash > 0) w.flash -= dt;
+
+    if (m.queenSnareCooldown > 0) m.queenSnareCooldown -= dt;
+    if (m.queenSnareTimer > 0) {
+      m.queenSnareTimer -= dt;
+      const getInfo = (window as any).__yarnCursorWebInfo;
+      const info = getInfo ? getInfo(`${m.id}-snare`) : null;
+      // Whipping free ends it early, same verb the spiders teach
+      if (!info || info.strain >= 1 || m.queenSnareTimer <= 0) {
+        m.queenSnareTimer = 0;
+        const release = (window as any).__yarnCursorReleaseWeb;
+        if (release) release(`${m.id}-snare`);
+      }
+    }
+
+    // Phase 3: she unravels her own cage and comes for the cards herself
+    if (m.hp <= QUEEN_PHASE3_HP) {
+      if (m.queenWalls.length > 0) m.queenWalls.length = 0;
+      return;
+    }
+
+    if (this.cageIsUp(m)) {
+      m.queenRespinTimer = QUEEN_WALL_RESPIN;
+    } else {
+      m.queenRespinTimer -= dt;
+      if (m.queenRespinTimer <= 0) this.spinCage(m);
+    }
+  }
+
+  private updateQueen(m: Monster, dt: number) {
+    if (m.hp <= QUEEN_PHASE3_HP) {
+      this.queenRampage(m, dt);
+      return;
+    }
+
+    this.wander(m, dt, 70);
+
+    const card = this.findNearestCard(m.x, m.y);
+    if (!card) return;
+    const rect = getCachedRect(card);
+    const tcx = rect.left + rect.width / 2;
+    const tcy = rect.top + rect.height / 2;
+
+    // Spread shot in both cage phases
+    m.bossAttackTimer -= dt;
+    if (m.bossAttackTimer <= 0) {
+      const baseAngle = Math.atan2(tcy - m.y, tcx - m.x);
+      for (let i = -1; i <= 1; i++) {
+        this.fireProjectile(m, card, baseAngle + i * 0.3, QUEEN_COLORS.accent, m.size * 0.8);
+      }
+      m.bossAttackTimer = QUEEN_SPREAD_COOLDOWN;
+    }
+
+    if (m.hp > QUEEN_PHASE2_HP) return;
+
+    // Phase 2: ring bursts + a pair of spiders on your yarn
+    m.queenRingTimer -= dt;
+    if (m.queenRingTimer <= 0) {
+      const cards = this.getAliveCards();
+      for (let i = 0; i < QUEEN_RING_COUNT; i++) {
+        const a = (i / QUEEN_RING_COUNT) * Math.PI * 2 + m.queenSpin;
+        const dest = cards[Math.floor(Math.random() * cards.length)] ?? card;
+        this.fireProjectile(m, dest, a, QUEEN_COLORS.ring, m.size * 0.9);
+      }
+      m.queenRingTimer = QUEEN_RING_COOLDOWN;
+    }
+
+    m.queenAddTimer -= dt;
+    if (m.queenAddTimer <= 0) {
+      m.queenAddTimer = QUEEN_ADD_INTERVAL;
+      const alive = this.monsters.reduce((n, o) => n + (o.isSnarl && o.alive ? 1 : 0), 0);
+      for (let i = alive; i < QUEEN_MAX_ADDS; i++) {
+        const target = this.findTarget();
+        if (!target) break;
+        this.spawnSnarl(target, {
+          x: m.x + (Math.random() - 0.5) * 90,
+          y: m.y + (Math.random() - 0.5) * 90,
+        });
+      }
+    }
+  }
+
+  /** Phase 3: charge the nearest card and chew it far faster than a moth. */
+  private queenRampage(m: Monster, dt: number) {
+    const card = this.findNearestCard(m.x, m.y);
+    if (!card) return;
+    const rect = getCachedRect(card);
+    const tcx = rect.left + rect.width / 2;
+    const tcy = rect.top + rect.height / 2;
+    const dx = tcx - m.x;
+    const dy = tcy - m.y;
+    const distSq = dx * dx + dy * dy;
+    const speed = 260;
+
+    if (distSq > 3600) {
+      const dist = Math.sqrt(distSq);
+      m.vx += (dx / dist) * speed * dt * 4;
+      m.vy += (dy / dist) * speed * dt * 4;
+      const spd = Math.hypot(m.vx, m.vy);
+      if (spd > speed) { m.vx = (m.vx / spd) * speed; m.vy = (m.vy / spd) * speed; }
+      m.eatingTimer = 0;
+      (card as HTMLElement).style.transform = "";
+    } else {
+      m.eatingTimer += dt;
+      m.targetEl = card; // so the shake gets cleared when she dies
+      const shake = Math.sin(m.eatingTimer * 25) * 10;
+      (card as HTMLElement).style.transform = `translateX(${shake}px)`;
+      const mobileDmg = this.mobile ? 0.5 : 1;
+      this.damageCardAt(card, DAMAGE_PER_SECOND * 2.5 * mobileDmg * dt, m.x, m.y, m.id);
+    }
+    m.x += m.vx * dt; m.y += m.vy * dt;
+    m.vx *= 0.95; m.vy *= 0.95;
+  }
+
   update(dt: number) {
     newRectCacheFrame();
     if (this.levelUpTimer > 0) this.levelUpTimer -= dt;
@@ -784,6 +1520,8 @@ export class MonsterManager {
     prevScrollY = scrollY;
 
     if (this.paused || this.gameOver) {
+      // Never leave the player's yarn pinned while the game isn't running
+      for (const m of this.monsters) this.releaseWeb(m);
       this.updateParticles(dt);
       return;
     }
@@ -814,15 +1552,14 @@ export class MonsterManager {
     } else {
       this.maxMonsters = this.mobile ? 2 + Math.floor((this.level - 1) * 0.4) : 2 + Math.floor(this.level * 0.6);
     }
-    // Level 7: fewer enemies (shielded-only level)
-    if (this.level === SHIELDED_FIRST_LEVEL) {
-      this.maxMonsters = Math.min(this.maxMonsters, this.mobile ? 2 : 3);
-      this.spawnInterval = Math.max(this.spawnInterval, 3);
+    const rule = LEVEL_RULES[this.level];
+    const cap = (this.mobile ? rule?.maxMonstersMobile : undefined) ?? rule?.maxMonsters;
+    if (cap !== undefined) {
+      // A boss level pins the count; other levels only lower it
+      this.maxMonsters = rule?.boss ? cap : Math.min(this.maxMonsters, cap);
     }
-    // Level 10: boss fight — only 1 spawned (boss spawns its own adds)
-    if (this.level === BOSS_FIRST_LEVEL) {
-      this.maxMonsters = 1;
-      this.spawnInterval = 1;
+    if (rule?.minSpawnInterval !== undefined) {
+      this.spawnInterval = Math.max(this.spawnInterval, rule.minSpawnInterval);
     }
 
     if (this.spawnTimer > this.spawnInterval) {
@@ -849,6 +1586,8 @@ export class MonsterManager {
       if (m.flashTimer > 0) m.flashTimer -= dt;
       if (m.isShielded || m.isBoss) for (let i = 0; i < 8; i++) if (m.shieldFlash[i] > 0) m.shieldFlash[i] -= dt;
 
+      if (m.isQueen) this.tickQueenCage(m, dt);
+
       if (m.isBoss) {
         const prevInvuln = m.bossInvulnTimer;
         m.bossInvulnTimer = Math.max(0, m.bossInvulnTimer - dt);
@@ -873,39 +1612,19 @@ export class MonsterManager {
         else continue;
       }
 
+      if (m.isSnarl) {
+        this.updateSnarl(m, dt);
+        continue;
+      }
+
+      if (m.isQueen) {
+        this.updateQueen(m, dt);
+        continue;
+      }
+
       if (m.isBoss) {
         // ── Boss: wander between random positions near blog entries ──
-        m.bossWanderTimer -= dt;
-        if (!m.bossWanderTarget || m.bossWanderTimer <= 0) {
-          // Pick a random card and wander near it
-          const cards = this.getAliveCards();
-          if (cards.length > 0) {
-            const card = cards[Math.floor(Math.random() * cards.length)];
-            const rect = getCachedRect(card);
-            const margin = 180;
-            m.bossWanderTarget = {
-              x: rect.left + rect.width / 2 + (Math.random() - 0.5) * margin * 2,
-              y: rect.top + rect.height / 2 + (Math.random() - 0.5) * margin,
-            };
-            m.bossWanderTimer = 2 + Math.random() * 3;
-          }
-        }
-
-        if (m.bossWanderTarget) {
-          const dx = m.bossWanderTarget.x - m.x;
-          const dy = m.bossWanderTarget.y - m.y;
-          const distSq = dx * dx + dy * dy;
-          const bossSpeed = 80;
-          if (distSq > 100) {
-            const dist = Math.sqrt(distSq);
-            m.vx += (dx / dist) * bossSpeed * dt * 3;
-            m.vy += (dy / dist) * bossSpeed * dt * 3;
-            const spd = Math.sqrt(m.vx * m.vx + m.vy * m.vy);
-            if (spd > bossSpeed) { m.vx = (m.vx / spd) * bossSpeed; m.vy = (m.vy / spd) * bossSpeed; }
-          }
-        }
-        m.x += m.vx * dt; m.y += m.vy * dt;
-        m.vx *= 0.95; m.vy *= 0.95;
+        this.wander(m, dt, 80);
 
         // ── Boss attack logic ──
         const bossPhase2 = m.hp <= BOSS_HP / 2;
@@ -970,22 +1689,9 @@ export class MonsterManager {
               for (let si = 0; si < 3; si++) {
                 const target = this.findTarget();
                 if (target) {
-                  const pos = { x: m.x + (Math.random() - 0.5) * 80, y: m.y + (Math.random() - 0.5) * 80 };
-                  this.monsters.push({
-                    x: pos.x, y: pos.y, vx: 0, vy: 0,
-                    targetT: target.t, targetX: target.x, targetY: target.y,
-                    size: 34, hitRadius: 68,
-                    colorIdx: Math.floor(Math.random() * SHOOTER_COLORS.length),
-                    wingPhase: Math.random() * Math.PI * 2,
-                    alive: true, spawnAnim: 0, eatingTimer: 0, targetEl: target.el,
-                    hp: 2, isBig: false, isHuge: false, flashTimer: 0,
-                    id: `m${monsterIdCounter++}`,
-                    isShooter: true, orbitAngle: Math.random() * Math.PI * 2,
-                    shootCooldown: SHOOTER_COOLDOWN,
-                    isShielded: false, shieldSegments: 0, shieldFlash: [],
-                    isBoss: false, bossOpenSegment: 0, bossInvulnTimer: 0,
-                    bossAttackTimer: 0, bossPhase2Cycle: 0, bossBurstsFired: 0,
-                    bossWanderTarget: null, bossWanderTimer: 0,
+                  this.spawnShooter(target, {
+                    x: m.x + (Math.random() - 0.5) * 80,
+                    y: m.y + (Math.random() - 0.5) * 80,
                   });
                 }
               }
@@ -1252,13 +1958,7 @@ export class MonsterManager {
 
       ctx.font = `bold 28px ${CANVAS_HEADING_FONT}`;
       ctx.fillStyle = "#2d3436";
-      const msgs = this.level === 10 ? "BOSS! Find the opening in its shield!"
-        : this.level >= 10 ? "Colossal beasts incoming!"
-        : this.level >= 7 ? "Shielded foes! Hit them from behind!"
-        : this.level >= 6 ? "Bigger creatures approaching..."
-        : this.level >= 5 ? "Ranged enemies spotted!"
-        : "They're getting faster...";
-      ctx.fillText(msgs, 0, 45);
+      ctx.fillText(bannerFor(this.level), 0, 45);
 
       ctx.restore();
     }
@@ -1301,7 +2001,191 @@ export class MonsterManager {
         ctx.globalAlpha = 0.4 + Math.sin(m.bossInvulnTimer * 20) * 0.3;
       }
 
-      if (m.isBoss) {
+      if (m.isQueen) {
+        // ── Loom Queen: pixel art spider matriarch behind a web cage ──
+        const q = QUEEN_COLORS;
+        const p = s / 10;
+        const rage = m.hp <= QUEEN_PHASE3_HP;
+        const bob = Math.sin(m.wingPhase * 0.7) * p * 0.8;
+
+        // Eight arched legs, alternating their gait
+        ctx.fillStyle = q.leg;
+        for (let side = -1; side <= 1; side += 2) {
+          for (let i = 0; i < 4; i++) {
+            const a = -0.85 + i * 0.5 + Math.sin(m.wingPhase + i * 0.9) * 0.12;
+            for (let j = 1; j <= 5; j++) {
+              const r = j * p * 1.7;
+              const lx = side * Math.cos(a) * r;
+              const ly = Math.sin(a) * r - Math.sin((j / 5) * Math.PI) * p * 2.2;
+              px(lx - p * 0.55, ly - p * 0.55 + bob, p * 1.1, p * 1.1);
+            }
+          }
+        }
+
+        // Abdomen
+        ctx.fillStyle = q.body;
+        px(-3.5 * p, 0.5 * p + bob, 7 * p, 6 * p);
+        px(-2.5 * p, -0.5 * p + bob, 5 * p, 1 * p);
+        px(-2.5 * p, 6.5 * p + bob, 5 * p, 1 * p);
+        // Hourglass marking — turns red when she unravels
+        ctx.fillStyle = rage ? q.rage : q.accent;
+        px(-1 * p, 2 * p + bob, 2 * p, 1.5 * p);
+        px(-1.5 * p, 3.5 * p + bob, 3 * p, 1.5 * p);
+
+        // Head / thorax
+        ctx.fillStyle = q.body;
+        px(-2.5 * p, -4.5 * p + bob, 5 * p, 4 * p);
+        // Crown
+        ctx.fillStyle = q.accent;
+        px(-2.5 * p, -5.2 * p + bob, 5 * p, 0.8 * p);
+        px(-2.5 * p, -6.2 * p + bob, 1 * p, 1.5 * p);
+        px(-0.5 * p, -6.8 * p + bob, 1 * p, 2 * p);
+        px(1.5 * p, -6.2 * p + bob, 1 * p, 1.5 * p);
+        // Six eyes
+        ctx.fillStyle = rage ? q.rage : q.eye;
+        px(-1.8 * p, -3.8 * p + bob, 1 * p, 1 * p);
+        px(0.8 * p, -3.8 * p + bob, 1 * p, 1 * p);
+        px(-1.2 * p, -2.5 * p + bob, 0.7 * p, 0.7 * p);
+        px(0.5 * p, -2.5 * p + bob, 0.7 * p, 0.7 * p);
+        px(-2.4 * p, -2.5 * p + bob, 0.6 * p, 0.6 * p);
+        px(1.8 * p, -2.5 * p + bob, 0.6 * p, 0.6 * p);
+        if (rage) {
+          ctx.globalAlpha = 0.4 + Math.sin(time * 9) * 0.3;
+          px(-2.4 * p, -4.2 * p + bob, 2 * p, 2 * p);
+          px(0.4 * p, -4.2 * p + bob, 2 * p, 2 * p);
+          ctx.globalAlpha = 1;
+        }
+        // Fangs
+        ctx.fillStyle = "#ecf0f1";
+        px(-1.3 * p, -1.2 * p + bob, 0.7 * p, 1.4 * p);
+        px(0.6 * p, -1.2 * p + bob, 0.7 * p, 1.4 * p);
+
+        // ── The cage: silk strands she hides behind ──
+        for (const w of m.queenWalls) {
+          if (w.hp <= 0) continue;
+          // Same geometry the collision uses, shifted into the queen's local space
+          const seg = this.wallSegment(m, w);
+          const x1 = seg.x1 - m.x, y1 = seg.y1 - m.y;
+          const dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1;
+          const len = Math.hypot(dx, dy);
+          const nx = -dy / len, ny = dx / len; // strand normal, for the barbs
+          const flash = w.flash > 0;
+          ctx.fillStyle = flash ? q.strandHit : q.strand;
+          ctx.globalAlpha = flash ? 1 : (w.hp >= QUEEN_WALL_HP ? 0.95 : 0.6);
+          const steps = Math.max(12, Math.round(len / 11));
+          for (let i = 0; i <= steps; i++) {
+            const t = i / steps;
+            const sz = i % 2 === 0 ? 6 : 4;
+            px(x1 + dx * t - sz / 2, y1 + dy * t - sz / 2, sz, sz);
+          }
+          // Barbs along an intact strand; a frayed one loses them
+          if (w.hp >= QUEEN_WALL_HP) {
+            for (let i = 1; i < 6; i++) {
+              const t = i / 6;
+              px(x1 + dx * t - nx * 5 - 1.5, y1 + dy * t - ny * 5 - 1.5, 3, 3);
+              px(x1 + dx * t + nx * 5 - 1.5, y1 + dy * t + ny * 5 - 1.5, 3, 3);
+            }
+          }
+        }
+        ctx.globalAlpha = 1;
+
+        drawHpBar(px, ctx, s, p, Math.max(0, m.hp / m.maxHp));
+
+      } else if (m.isSnarl) {
+        // ── Snarl: little spider squatting on your yarn ──
+        const c = SNARL_COLORS[m.colorIdx];
+        const p = s / 6;
+        const strain = m.snarlStrain;
+
+        if (m.snarlAttached) {
+          ctx.fillStyle = strain > 0.6 ? SNARL_STRAIN_WARN : c.web;
+          ctx.globalAlpha = 0.35 + strain * 0.55;
+
+          // Leash to the yarn, when the web holds it at a distance (mobile)
+          const lx = m.snarlLeashX - m.x;
+          const ly = m.snarlLeashY - m.y;
+          const leash = Math.hypot(lx, ly);
+          if (leash > s) {
+            const steps = Math.min(40, Math.round(leash / 9));
+            for (let i = 1; i <= steps; i++) {
+              const t = i / steps;
+              const sag = Math.sin(t * Math.PI) * (1 - strain) * 12;
+              px(lx * t - p * 0.35, ly * t + sag - p * 0.35, p * 0.7, p * 0.7);
+            }
+          }
+
+          // Silk radiating from the bite point, shivering as strain builds
+          for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2 + m.wingPhase * 0.15;
+            for (let j = 2; j <= 6; j++) {
+              const r = j * p * 1.5 * (1 + strain * 0.18 * Math.sin(time * 22 + j));
+              px(Math.cos(a) * r - p * 0.35, Math.sin(a) * r - p * 0.35, p * 0.7, p * 0.7);
+            }
+          }
+          ctx.globalAlpha = 1;
+        }
+
+        // Legs
+        ctx.fillStyle = c.leg;
+        for (let side = -1; side <= 1; side += 2) {
+          for (let i = 0; i < 4; i++) {
+            const a = -0.8 + i * 0.5 + Math.sin(m.wingPhase * 1.5 + i) * 0.15;
+            for (let j = 1; j <= 3; j++) {
+              const r = j * p * 1.3;
+              const lx = side * Math.cos(a) * r;
+              const ly = Math.sin(a) * r - Math.sin((j / 3) * Math.PI) * p * 1.1;
+              px(lx - p * 0.4, ly - p * 0.4, p * 0.8, p * 0.8);
+            }
+          }
+        }
+        // Body
+        ctx.fillStyle = c.body;
+        px(-1.5 * p, -0.4 * p, 3 * p, 3.2 * p);
+        px(-1 * p, -2.2 * p, 2 * p, 1.9 * p);
+        ctx.fillStyle = c.eye;
+        px(-0.85 * p, -1.8 * p, 0.6 * p, 0.6 * p);
+        px(0.25 * p, -1.8 * p, 0.6 * p, 0.6 * p);
+
+        // Wind-up telegraph: a closing ring showing exactly how far the web can
+        // reach. Get the yarn outside it before it snaps shut and nothing happens.
+        if (m.snarlWindup > 0) {
+          const t = 1 - m.snarlWindup / SNARL_WINDUP;
+          const ringR = SNARL_ATTACH_RANGE * (1 - t * 0.25);
+          ctx.fillStyle = SNARL_STRAIN_WARN;
+          ctx.globalAlpha = 0.45 + t * 0.5;
+          const dots = 54;
+          for (let i = 0; i < dots; i++) {
+            // Dashes sweep round as it charges, so the ring reads as tightening
+            const a = (i / dots) * Math.PI * 2 + t * 0.8;
+            const d = 4 + t * 3;
+            px(Math.cos(a) * ringR - d / 2, Math.sin(a) * ringR - d / 2, d, d);
+          }
+          // Spokes reeling inward, pointing at what is about to be grabbed
+          ctx.globalAlpha = 0.25 + t * 0.45;
+          for (let i = 0; i < 6; i++) {
+            const a = (i / 6) * Math.PI * 2 - t * 1.2;
+            for (let j = 3; j <= 7; j++) {
+              const r = ringR * (j / 8) * (1 - t * 0.2);
+              px(Math.cos(a) * r - 2, Math.sin(a) * r - 2, 4, 4);
+            }
+          }
+          ctx.globalAlpha = 1;
+        }
+
+        // Strain meter — shown from the moment it latches, so the answer to
+        // "what do I do?" is on screen rather than in a hint that already faded
+        if (m.snarlAttached) {
+          const bw = s * 2.2;
+          const by = -s * 1.7;
+          ctx.fillStyle = "#2c3e50";
+          px(-bw / 2 - 1, by - 1, bw + 2, 7);
+          ctx.fillStyle = "#ecf0f1";
+          px(-bw / 2, by, bw, 5);
+          ctx.fillStyle = strain > 0.66 ? SNARL_STRAIN_WARN : strain > 0.33 ? "#f1c40f" : "#e67e22";
+          px(-bw / 2, by, bw * strain, 5);
+        }
+
+      } else if (m.isBoss) {
         // ── Boss: large pixel art demon moth ──
         const bc = BOSS_COLORS[m.colorIdx];
         const p = s / 10; // finer pixel grid for bigger creature
@@ -1401,21 +2285,7 @@ export class MonsterManager {
         }
         ctx.globalAlpha = 1;
 
-        // HP bar below boss
-        const hpBarW = s * 2;
-        const hpBarH = p * 1.2;
-        const hpBarY = s * 1.2;
-        ctx.fillStyle = "#2c3e50";
-        px(-hpBarW / 2, hpBarY, hpBarW, hpBarH);
-        const hpFrac = Math.max(0, m.hp / BOSS_HP);
-        ctx.fillStyle = hpFrac > 0.5 ? "#8e44ad" : hpFrac > 0.25 ? "#e67e22" : "#e74c3c";
-        px(-hpBarW / 2, hpBarY, hpBarW * hpFrac, hpBarH);
-        // HP bar border
-        ctx.fillStyle = "#ecf0f1";
-        px(-hpBarW / 2 - 1, hpBarY - 1, 1, hpBarH + 2);
-        px(hpBarW / 2, hpBarY - 1, 1, hpBarH + 2);
-        px(-hpBarW / 2, hpBarY - 1, hpBarW, 1);
-        px(-hpBarW / 2, hpBarY + hpBarH, hpBarW, 1);
+        drawHpBar(px, ctx, s, p, Math.max(0, m.hp / m.maxHp));
 
       } else if (m.isShielded) {
         // ── Shielded: bulky pixel art moth with shield plates ──
@@ -1592,9 +2462,79 @@ export class MonsterManager {
       }
       ctx.restore();
     }
+
+    this.drawOffScreenMarkers(ctx);
+  }
+
+  /**
+   * Small marker at the viewport edge for every monster that is currently
+   * outside it, pointing at where the monster actually is.
+   *
+   * Monsters spawn just off-screen and then chase a card, and the page scrolls
+   * under them, so a monster can spend a while somewhere you cannot see. Without
+   * this the first warning is a card already being eaten.
+   *
+   * Each marker keeps its monster's own body colour, so a boss or a queen reads
+   * differently from a moth, and fades with distance so a far-off spawn is a hint
+   * rather than a demand.
+   */
+  private drawOffScreenMarkers(ctx: CanvasRenderingContext2D) {
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const prevAlpha = ctx.globalAlpha;
+
+    for (const m of this.monsters) {
+      if (!m.alive || m.spawnAnim < 1) continue;
+
+      // A monster only half out of frame is still visible; wait until its body
+      // has genuinely cleared the edge.
+      const r = m.size * 0.5;
+      const outLeft = -(m.x + r);
+      const outRight = m.x - r - vw;
+      const outTop = -(m.y + r);
+      const outBottom = m.y - r - vh;
+      const overshoot = Math.max(outLeft, outRight, outTop, outBottom);
+      if (overshoot <= 0) continue;
+
+      const colors = deathColors(m);
+      // Bosses and queens get a slightly bigger dot: worth interrupting for.
+      const dot = OFFSCREEN_DOT * (m.isBoss || m.isQueen ? 1.7 : m.isHuge ? 1.35 : 1);
+      const inset = OFFSCREEN_MARGIN + dot;
+      const mx = Math.min(vw - inset, Math.max(inset, m.x));
+      const my = Math.min(vh - inset, Math.max(inset, m.y));
+
+      ctx.save();
+      ctx.globalAlpha = 0.85 - 0.55 * Math.min(1, overshoot / OFFSCREEN_FADE_DIST);
+      ctx.translate(mx, my);
+      // Point along the direction to the monster, from the clamped position.
+      ctx.rotate(Math.atan2(m.y - my, m.x - mx));
+
+      // Arrowhead just outboard of the dot.
+      ctx.fillStyle = colors.trim;
+      ctx.beginPath();
+      ctx.moveTo(dot * 2.4, 0);
+      ctx.lineTo(dot * 0.9, -dot * 0.9);
+      ctx.lineTo(dot * 0.9, dot * 0.9);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.fillStyle = colors.body;
+      ctx.beginPath();
+      ctx.arc(0, 0, dot, 0, Math.PI * 2);
+      ctx.fill();
+
+      // A single eye pixel, so it reads as a creature rather than a blob.
+      ctx.fillStyle = colors.eye;
+      ctx.fillRect(-dot * 0.25, -dot * 0.25, Math.max(1, dot * 0.5), Math.max(1, dot * 0.5));
+      ctx.restore();
+    }
+
+    ctx.globalAlpha = prevAlpha;
   }
 
   cleanup() {
+    const releaseAll = (window as any).__yarnCursorReleaseAllWebs;
+    if (releaseAll) releaseAll();
     for (const m of this.monsters) {
       if (m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
     }
