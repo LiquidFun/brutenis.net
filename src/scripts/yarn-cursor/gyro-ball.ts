@@ -32,6 +32,8 @@ export class GyroBall {
   private trailCount = 0;
   private trailColors: string[];
   private gravityScale: number;
+  /** Seconds left held fast by silk — see freeze(). */
+  freezeLeft = 0;
 
   get radius(): number {
     return this.visual.radius;
@@ -91,7 +93,26 @@ export class GyroBall {
     this.hasOrientation = true;
   }
 
+  /**
+   * Stick the ball where it is for a while. Unlike a spider's web this is not a
+   * struggle — no amount of tilting shortens it — so it is only ever handed out
+   * for walking into something the game telegraphed first.
+   */
+  freeze(seconds: number) {
+    this.freezeLeft = Math.max(this.freezeLeft, seconds);
+    this.vx = 0; this.vy = 0;
+    this.flickX = 0; this.flickY = 0;
+  }
+
   update(dt: number, w: number, h: number) {
+    if (this.freezeLeft > 0) {
+      this.freezeLeft -= dt;
+      // Tilting while stuck must not bank up a catapult for when it wears off
+      this.vx = 0; this.vy = 0;
+      this.flickX = 0; this.flickY = 0;
+      return;
+    }
+
     // Apply gravity + flick impulse
     this.vx = (this.vx + (this.gravX + this.flickX) * dt) * DAMPING;
     this.vy = (this.vy + (this.gravY + this.flickY) * dt) * DAMPING;

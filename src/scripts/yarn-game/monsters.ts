@@ -37,7 +37,7 @@ const SNARL_WINDUP = 0.6;
 const SNARL_WEB_LIFETIME = 5;
 const SNARL_RETRY_COOLDOWN = 2.5;
 // Silk reads against the cream page background, so it is mid-grey rather than
-// white — same reason the Queen's cage strands are purple.
+// white — same reason the Queen's threads are purple.
 const SNARL_COLORS = [
   { body: "#1e1b2e", eye: "#f1c40f", leg: "#4a3f6b", web: "#7f8c8d" },
   { body: "#2d1b1b", eye: "#e74c3c", leg: "#6b3f3f", web: "#96786f" },
@@ -62,35 +62,51 @@ const BOSS_COLORS = [
 ];
 
 // ── Loom Queen (level 15) ──
-// Caged behind rotating web strands: cut them all to expose her, then burst
-// her down before she re-spins the cage.
+// She refuses to be stood next to. Every single hit, in every phase, sends her
+// down a fresh silk line strung across the viewport, and the line is drawn a
+// beat before she travels it — so the fight is entirely about reading where she
+// is *about* to be. Being on the thread when she goes is what gets your yarn
+// stuck to it. The phases change how much room she gives you to read it, never
+// whether she blinks at all.
 const QUEEN_LEVEL = 15;
 const QUEEN_SCORE = 40;
-const QUEEN_HP = 15; // 3 capped windows of 3, then a 6 HP unravelled phase
+const QUEEN_HP = 15; // one blink per hit, all the way down
 const QUEEN_SIZE = 80;
 const QUEEN_PHASE2_HP = 12;
 const QUEEN_PHASE3_HP = 6;
-// She recoils between hits, so parking the ball on her is not free damage —
-// the fight is about re-opening the cage, not about grinding contact.
+// She recoils between hits, so parking the ball on her is not free damage.
 const QUEEN_INVULN = 0.7;
-const QUEEN_EXPEL_FORCE = 2600; // the cage snapping taut throws caught yarn out
-// She only ever gives up this many hits before slamming a fresh cage shut. The
-// fight is therefore a fixed number of cut-dive-strike cycles, which is what
-// stops "hold the ball on her and wait" from being a winning line.
-const QUEEN_HITS_PER_WINDOW = 3;
-// Her strands snare the yarn exactly like a Snarl's web — the mechanic level 11
-// teaches. This is what makes idly grinding the ball against the cage a losing
-// habit: you spend the fight stuck to it instead of getting inside.
-const QUEEN_SNARE_TIME = 1.2;
-const QUEEN_SNARE_COOLDOWN = 1.5; // across the whole cage, so it stays fair
-const QUEEN_WALL_COUNT = 3;
-const QUEEN_WALL_HP = 2;
-const QUEEN_WALL_DIST = 145; // cage inradius on a roomy viewport
-const QUEEN_CAGE_MAX_FRAC = 0.19; // ...but never more than this of the short side
-const QUEEN_CAGE_OVERLAP = 1.06; // strand overshoot so the corners visibly meet
-const QUEEN_STRAND_THICKNESS = 7; // collision half-width of a cage strand
-const QUEEN_WALL_RESPIN = 4; // exposed window before the cage comes back
-const QUEEN_CAGE_SPIN = 0.35; // rad/s
+// She also repositions unprompted, so the mechanic gets to teach itself before
+// the player has landed a hit to trigger it.
+const QUEEN_BLINK_IDLE = 7;
+const QUEEN_BLINK_IDLE_P2 = 4;
+// The telegraph. Long enough to swing the yarn off the thread from anywhere on
+// it — this is the whole fairness budget of the mechanic, so it is generous.
+// From the halfway mark on it is cut down: the same read, less time to act.
+const QUEEN_BLINK_TELEGRAPH = 0.9;
+const QUEEN_BLINK_TELEGRAPH_P2 = 0.55;
+// The late phases also fatten the thread and the aura by this much, so the
+// window shrinks exactly as the thing you have to leave gets harder to leave.
+const QUEEN_PHASE2_SPREAD = 1.5;
+const QUEEN_BLINK_MIN_DIST = 260; // short hops do not read as a dash
+const QUEEN_BLINK_MARGIN = 90; // keep the landing spot comfortably on-screen
+const QUEEN_BLINK_TRIES = 10;
+// Collision half-width of the thread, on top of the ball's own radius. Scaled
+// to the viewport's short side: a fixed pixel width that reads as a real hazard
+// on a phone is a hairline on a desktop monitor, and the thread has to be worth
+// dodging on the screen it is actually drawn on. Still leaves room to hug the
+// landing spot from the side, which is the skilful line.
+const QUEEN_THREAD_FRAC = 0.09;
+const QUEEN_THREAD_HALF_MIN = 30;
+const QUEEN_THREAD_HALF_MAX = 115;
+// A bulb of silk around her body, at both ends of the blink. Without it the
+// safest place to stand after landing a hit is pressed right against her, which
+// is precisely the habit the teleport exists to break — and it makes camping
+// the landing spot a real gamble rather than a free hit.
+const QUEEN_AURA_FRAC = 0.12;
+const QUEEN_AURA_MIN = 65;
+const QUEEN_AURA_MAX = 170;
+const QUEEN_FREEZE_TIME = 3;
 const QUEEN_SPREAD_COOLDOWN = 2.2;
 const QUEEN_RING_COOLDOWN = 6;
 const QUEEN_RING_COUNT = 8;
@@ -99,8 +115,8 @@ const QUEEN_MAX_ADDS = 2;
 const QUEEN_COLORS = {
   body: "#2c1338", eye: "#f5b7b1", leg: "#5b2c6f",
   accent: "#f7dc6f", rage: "#e74c3c",
-  strand: "#7d3c98", // cage silk — must stand out on the cream background
-  strandHit: "#f7dc6f", // a strand flaring as the ball cuts it
+  strand: "#7d3c98", // silk — must stand out on the cream background
+  strandHot: "#f7dc6f", // the thread in the last moments before she travels it
   ring: "#9b59b6", // phase 2 ring-burst projectiles
 };
 
@@ -304,11 +320,16 @@ interface Projectile {
 
 type MonsterKind = "moth" | "shooter" | "shielded" | "boss" | "snarl" | "queen";
 
-/** One strand of the Loom Queen's cage, stored as an angle around her. */
-interface WebWall {
-  angle: number;
-  hp: number;
-  flash: number;
+/**
+ * Where the Loom Queen's thread caught the player's yarn. Purely cosmetic — the
+ * hold itself lives in the yarn cursor — but it has to be drawn for the whole
+ * duration or a frozen ball reads as the game having broken.
+ */
+interface SilkKnot {
+  x: number;
+  y: number;
+  left: number;
+  total: number;
 }
 
 interface Monster {
@@ -344,14 +365,16 @@ interface Monster {
   snarlLeashY: number;
   snarlWindup: number;
   isQueen: boolean;
-  queenWalls: WebWall[];
-  queenSpin: number;
-  queenRespinTimer: number;
+  /** Countdown to an unprompted slip, so she moves even if never touched. */
+  queenBlinkTimer: number;
+  /** >0 while the thread is drawn and she is committed to travelling it. */
+  queenTelegraph: number;
+  /** What queenTelegraph started at — the render needs it to show progress. */
+  queenTelegraphMax: number;
+  queenDestX: number;
+  queenDestY: number;
   queenRingTimer: number;
   queenAddTimer: number;
-  queenHitsThisWindow: number;
-  queenSnareTimer: number;
-  queenSnareCooldown: number;
 }
 
 interface SpawnTarget { x: number; y: number; t: number; el: Element }
@@ -433,9 +456,9 @@ function createMonster(
     snarlAttached: false, snarlTimer: 0, snarlStrain: 0,
     snarlLeashX: x, snarlLeashY: y, snarlWindup: 0,
     isQueen: kind === "queen",
-    queenWalls: [], queenSpin: 0, queenRespinTimer: 0,
-    queenRingTimer: 0, queenAddTimer: 0, queenHitsThisWindow: 0,
-    queenSnareTimer: 0, queenSnareCooldown: 0,
+    queenBlinkTimer: 0, queenTelegraph: 0, queenTelegraphMax: QUEEN_BLINK_TELEGRAPH,
+    queenDestX: x, queenDestY: y,
+    queenRingTimer: 0, queenAddTimer: 0,
     ...over,
   };
 }
@@ -477,7 +500,7 @@ const LEVEL_RULES: Record<number, LevelRule> = {
     maxMonsters: 5, maxMonstersMobile: 3, minSpawnInterval: 1.4,
     banner: "Spiders! They pin your yarn — shake them off!",
   },
-  15: { boss: "queen", maxMonsters: 1, minSpawnInterval: 1, banner: "THE LOOM QUEEN! Cut her cage to reach her!" },
+  15: { boss: "queen", maxMonsters: 1, minSpawnInterval: 1, banner: "THE LOOM QUEEN! Stay off her silk lines!" },
 };
 
 function bannerFor(level: number): string {
@@ -504,6 +527,20 @@ function getDestroyedSet(): Set<string> {
   const path = location.pathname;
   if (!destroyedPerPath.has(path)) destroyedPerPath.set(path, new Set());
   return destroyedPerPath.get(path)!;
+}
+
+/** Shortest distance from a point to a line segment. */
+function distToSegment(
+  px: number, py: number,
+  x1: number, y1: number, x2: number, y2: number,
+): number {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lenSq = dx * dx + dy * dy;
+  const t = lenSq > 0
+    ? Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / lenSq))
+    : 0;
+  return Math.hypot(px - (x1 + dx * t), py - (y1 + dy * t));
 }
 
 function pointOnPerimeter(rect: DOMRect, t: number): { x: number; y: number } {
@@ -568,6 +605,8 @@ export class MonsterManager {
   levelUpTimer: number = 0;
   gameOver: boolean = false;
   paused: boolean = false;
+  /** Yarn currently stuck to one of the Loom Queen's threads. */
+  private silkKnots: SilkKnot[] = [];
   private mobile: boolean;
   private levelThresholds = [
     5, 15, 30, 50, 80, 120, 170, 230, 300,  // levels 2–10
@@ -751,94 +790,17 @@ export class MonsterManager {
 
   private spawnQueen(target: SpawnTarget) {
     const pos = this.spawnOffScreen();
-    const queen = createMonster("queen", pos.x, pos.y, target, {
+    this.monsters.push(createMonster("queen", pos.x, pos.y, target, {
       size: QUEEN_SIZE, hp: QUEEN_HP, isBig: true, isHuge: true, scoreValue: QUEEN_SCORE,
-      // Just her body, well inside the cage radius. The yarn ball trails its
-      // cursor by a fair margin, so a roomier hurtbox let a single circling
-      // motion cut strands and land hits at the same time — which made
-      // "grind the ball along the cage" strictly the best strategy.
+      // Just her body. The yarn ball trails its cursor by a fair margin, so a
+      // roomier hurtbox would let one lazy circling motion keep landing hits
+      // without ever having to read a telegraph.
       hitRadius: QUEEN_SIZE * 0.6,
       bossAttackTimer: QUEEN_SPREAD_COOLDOWN,
+      queenBlinkTimer: QUEEN_BLINK_IDLE,
       queenRingTimer: QUEEN_RING_COOLDOWN,
       queenAddTimer: QUEEN_ADD_INTERVAL,
-    });
-    this.spinCage(queen);
-    this.monsters.push(queen);
-  }
-
-  /** (Re)build the Loom Queen's ring of web strands at a fresh orientation. */
-  private spinCage(q: Monster) {
-    const base = Math.random() * Math.PI * 2;
-    q.queenWalls = [];
-    for (let i = 0; i < QUEEN_WALL_COUNT; i++) {
-      q.queenWalls.push({
-        angle: base + (i / QUEEN_WALL_COUNT) * Math.PI * 2,
-        hp: QUEEN_WALL_HP,
-        // Flare on materialising, so a cage re-forming is unmissable
-        flash: 0.25,
-      });
-    }
-    q.queenRespinTimer = 0;
-    q.queenHitsThisWindow = 0;
-    this.expelFromCage(q);
-  }
-
-  private cageRadius(): number {
-    return Math.min(
-      QUEEN_WALL_DIST,
-      Math.min(window.innerWidth, window.innerHeight) * QUEEN_CAGE_MAX_FRAC,
-    );
-  }
-
-  /**
-   * Silk snapping taut throws any yarn caught inside back out. Without this a
-   * player can simply park the ball in orbit and let each new cage form around
-   * them, which turns the whole fight into "hold still and win".
-   */
-  private expelFromCage(q: Monster) {
-    const getBalls = (window as any).__yarnCursorGetAllBallPositions;
-    const impulse = (window as any).__yarnCursorApplyImpulse;
-    if (!getBalls || !impulse) return;
-    const r = this.cageRadius();
-    for (const b of getBalls()) {
-      const dx = b.x - q.x;
-      const dy = b.y - q.y;
-      const d = Math.hypot(dx, dy);
-      if (d > r) continue;
-      const nx = d > 0 ? dx / d : 1;
-      const ny = d > 0 ? dy / d : 0;
-      impulse(b.x, b.y, nx * QUEEN_EXPEL_FORCE, ny * QUEEN_EXPEL_FORCE);
-      for (let i = 0; i < 12; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const sp = 80 + Math.random() * 160;
-        this.particles.push({
-          x: b.x, y: b.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-          life: 0.4, maxLife: 0.4, size: 2 + Math.random() * 3,
-          color: Math.random() < 0.5 ? QUEEN_COLORS.strand : QUEEN_COLORS.accent,
-        });
-      }
-    }
-  }
-
-  /**
-   * World-space endpoints of one cage strand. The strands are the sides of a
-   * regular polygon with the queen at its centre, so a full cage genuinely
-   * encloses her — the ball cannot slip through a corner and hit an
-   * invulnerable target with no feedback.
-   */
-  private wallSegment(q: Monster, w: WebWall) {
-    const r = this.cageRadius();
-    const half = r * Math.tan(Math.PI / QUEEN_WALL_COUNT) * QUEEN_CAGE_OVERLAP;
-    const a = w.angle + q.queenSpin;
-    const cx = q.x + Math.cos(a) * r;
-    const cy = q.y + Math.sin(a) * r;
-    const px = -Math.sin(a) * half;
-    const py = Math.cos(a) * half;
-    return { x1: cx - px, y1: cy - py, x2: cx + px, y2: cy + py };
-  }
-
-  private cageIsUp(q: Monster): boolean {
-    return q.queenWalls.some(w => w.hp > 0);
+    }));
   }
 
   spawn() {
@@ -924,10 +886,14 @@ export class MonsterManager {
       m.snarlAttached = false;
       if (release) release(m.id);
     }
-    if (m.isQueen && m.queenSnareTimer > 0) {
-      m.queenSnareTimer = 0;
-      if (release) release(`${m.id}-snare`);
-    }
+  }
+
+  /** Thaw every ball the Queen's threads caught, and forget the knots. */
+  private clearSilk() {
+    if (this.silkKnots.length === 0) return;
+    this.silkKnots.length = 0;
+    const thaw = (window as any).__yarnCursorClearFreezes;
+    if (thaw) thaw();
   }
 
   /** Single death path: score, event, particles, cleanup. (nx, ny) = blast direction. */
@@ -967,69 +933,10 @@ export class MonsterManager {
     }
   }
 
-  /** Ball vs one cage strand. Returns true if it made contact. */
-  private hitWebWall(q: Monster, w: WebWall, bx: number, by: number, r: number): boolean {
-    const { x1, y1, x2, y2 } = this.wallSegment(q, w);
-    const dx = x2 - x1;
-    const dy = y2 - y1;
-    const lenSq = dx * dx + dy * dy;
-    const t = lenSq > 0
-      ? Math.max(0, Math.min(1, ((bx - x1) * dx + (by - y1) * dy) / lenSq))
-      : 0;
-    const cx = x1 + dx * t;
-    const cy = y1 + dy * t;
-    const ox = bx - cx;
-    const oy = by - cy;
-    const reach = r + QUEEN_STRAND_THICKNESS;
-    const distSq = ox * ox + oy * oy;
-    if (distSq > reach * reach) return false;
-
-    const dist = Math.sqrt(distSq) || 1;
-    const nx = ox / dist;
-    const ny = oy / dist;
-    // flash doubles as a per-strand hit cooldown so one pass can't shred it
-    if (w.flash <= 0) {
-      w.hp--;
-      w.flash = 0.3;
-      const c = QUEEN_COLORS;
-      for (let i = 0; i < 10; i++) {
-        const a = Math.random() * Math.PI * 2;
-        const sp = 60 + Math.random() * 120;
-        this.particles.push({
-          x: cx, y: cy, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
-          life: 0.35, maxLife: 0.35, size: 2 + Math.random() * 3,
-          color: Math.random() < 0.5 ? c.strand : c.accent,
-        });
-      }
-    }
-    const impulse = (window as any).__yarnCursorApplyImpulse;
-    if (impulse) impulse(bx, by, nx * 1800, ny * 1800);
-
-    if (q.queenSnareCooldown <= 0 && q.queenSnareTimer <= 0) {
-      const attach = (window as any).__yarnCursorAttachWeb;
-      if (attach && attach(`${q.id}-snare`, cx, cy, 200)) {
-        q.queenSnareTimer = QUEEN_SNARE_TIME;
-        q.queenSnareCooldown = QUEEN_SNARE_COOLDOWN;
-      }
-    }
-    return true;
-  }
-
   checkYarnBallHit(ballX: number, ballY: number, ballRadius: number): number {
     let hits = 0;
     for (const m of this.monsters) {
       if (!m.alive) continue;
-
-      // The Loom Queen's cage blocks the ball before anything else
-      if (m.isQueen) {
-        let caged = false;
-        for (const w of m.queenWalls) {
-          if (w.hp <= 0) continue;
-          if (this.hitWebWall(m, w, ballX, ballY, ballRadius)) { hits++; }
-          caged = true;
-        }
-        if (caged) continue; // untouchable until every strand is cut
-      }
 
       if (m.flashTimer > 0) continue;
       // Boss invulnerability window
@@ -1094,8 +1001,7 @@ export class MonsterManager {
         } else {
           m.flashTimer = 0.3;
           const c = deathColors(m);
-          // Boss: become invulnerable and rotate opening. The Queen is exposed
-          // for a fixed window instead, so she gets no invulnerability here.
+          // Boss: become invulnerable and rotate opening.
           if (m.kind === "boss") {
             m.bossInvulnTimer = BOSS_INVULN_TIME;
             // Pick new random open segment (different from current)
@@ -1104,11 +1010,8 @@ export class MonsterManager {
             m.bossOpenSegment = newOpen;
           } else if (m.isQueen) {
             m.bossInvulnTimer = QUEEN_INVULN;
-            // Enough hits landed — weave a fresh cage and throw the player out
-            if (++m.queenHitsThisWindow >= QUEEN_HITS_PER_WINDOW
-                && m.hp > QUEEN_PHASE3_HP) {
-              this.spinCage(m);
-            }
+            // Touched at all, in any phase — string a thread and slip away
+            this.startBlink(m);
           }
           const force = m.isBoss ? 50 + Math.random() * 30 : m.isShooter ? 150 + Math.random() * 100 : m.isHuge ? 100 + Math.random() * 80 : 300 + Math.random() * 200;
           m.vx = nx * force; m.vy = ny * force;
@@ -1381,51 +1284,166 @@ export class MonsterManager {
     }
   }
 
-  // ── Loom Queen: caged boss for level 15 ──
+  // ── Loom Queen: blinking boss for level 15 ──
 
   /**
-   * Cage bookkeeping. Runs even while she's flinching from a hit — otherwise a
-   * player who keeps landing hits freezes the respin timer and the cage never
-   * comes back.
+   * Blink bookkeeping. Runs even while she's flinching from a hit — otherwise a
+   * player who keeps landing hits freezes the telegraph mid-draw and she never
+   * actually goes anywhere.
    */
-  private tickQueenCage(m: Monster, dt: number) {
-    m.queenSpin += QUEEN_CAGE_SPIN * dt;
-    for (const w of m.queenWalls) if (w.flash > 0) w.flash -= dt;
-
-    if (m.queenSnareCooldown > 0) m.queenSnareCooldown -= dt;
-    if (m.queenSnareTimer > 0) {
-      m.queenSnareTimer -= dt;
-      const getInfo = (window as any).__yarnCursorWebInfo;
-      const info = getInfo ? getInfo(`${m.id}-snare`) : null;
-      // Whipping free ends it early, same verb the spiders teach
-      if (!info || info.strain >= 1 || m.queenSnareTimer <= 0) {
-        m.queenSnareTimer = 0;
-        const release = (window as any).__yarnCursorReleaseWeb;
-        if (release) release(`${m.id}-snare`);
-      }
-    }
-
-    // Phase 3: she unravels her own cage and comes for the cards herself
-    if (m.hp <= QUEEN_PHASE3_HP) {
-      if (m.queenWalls.length > 0) m.queenWalls.length = 0;
+  private tickQueenBlink(m: Monster, dt: number) {
+    if (m.queenTelegraph > 0) {
+      m.queenTelegraph -= dt;
+      if (m.queenTelegraph <= 0) this.resolveBlink(m);
       return;
     }
 
-    if (this.cageIsUp(m)) {
-      m.queenRespinTimer = QUEEN_WALL_RESPIN;
-    } else {
-      m.queenRespinTimer -= dt;
-      if (m.queenRespinTimer <= 0) this.spinCage(m);
+    m.queenBlinkTimer -= dt;
+    if (m.queenBlinkTimer <= 0) this.startBlink(m);
+  }
+
+  /**
+   * Pick a landing spot and start drawing the thread to it. Nothing moves yet —
+   * the whole point is that the player gets to see the line before it matters.
+   */
+  private startBlink(q: Monster) {
+    if (q.queenTelegraph > 0) return;
+
+    const vw = window.innerWidth;
+    const vh = window.innerHeight;
+    const margin = Math.min(QUEEN_BLINK_MARGIN, Math.min(vw, vh) * 0.2);
+    const spanX = Math.max(1, vw - margin * 2);
+    const spanY = Math.max(1, vh - margin * 2);
+
+    // Farthest of a few tries, stopping early once one reads as a real dash.
+    // On a cramped viewport every candidate is short and we take the best.
+    let bx = q.x, by = q.y, bestD = -1;
+    for (let i = 0; i < QUEEN_BLINK_TRIES; i++) {
+      const x = margin + Math.random() * spanX;
+      const y = margin + Math.random() * spanY;
+      const d = Math.hypot(x - q.x, y - q.y);
+      if (d <= bestD) continue;
+      bestD = d; bx = x; by = y;
+      if (d >= QUEEN_BLINK_MIN_DIST) break;
+    }
+
+    const p2 = this.queenLatePhase(q);
+    q.queenDestX = bx;
+    q.queenDestY = by;
+    q.queenTelegraphMax = p2 ? QUEEN_BLINK_TELEGRAPH_P2 : QUEEN_BLINK_TELEGRAPH;
+    q.queenTelegraph = q.queenTelegraphMax;
+    q.queenBlinkTimer = p2 ? QUEEN_BLINK_IDLE_P2 : QUEEN_BLINK_IDLE;
+  }
+
+  /**
+   * Past the halfway mark, everything about the blink gets bigger and shorter,
+   * and it stays that way for the rest of the fight — the last phase inherits
+   * these numbers rather than dropping the mechanic.
+   */
+  private queenLatePhase(q: Monster): boolean {
+    return q.hp <= QUEEN_PHASE2_HP;
+  }
+
+  /** Half-width of the silk thread, in the viewport it is being drawn in. */
+  private threadHalfWidth(q: Monster): number {
+    const short = Math.min(window.innerWidth, window.innerHeight);
+    const base = Math.max(
+      QUEEN_THREAD_HALF_MIN,
+      Math.min(QUEEN_THREAD_HALF_MAX, short * QUEEN_THREAD_FRAC),
+    );
+    return this.queenLatePhase(q) ? base * QUEEN_PHASE2_SPREAD : base;
+  }
+
+  /** Radius of the silk bulb around her body at each end of the blink. */
+  private auraRadius(q: Monster): number {
+    const short = Math.min(window.innerWidth, window.innerHeight);
+    const base = Math.max(
+      QUEEN_AURA_MIN,
+      Math.min(QUEEN_AURA_MAX, short * QUEEN_AURA_FRAC),
+    );
+    return this.queenLatePhase(q) ? base * QUEEN_PHASE2_SPREAD : base;
+  }
+
+  /** She travels the thread. Anything still lying on it gets stuck to it. */
+  private resolveBlink(q: Monster) {
+    const fromX = q.x, fromY = q.y;
+    const toX = q.queenDestX, toY = q.queenDestY;
+
+    this.snareOnThread(q, fromX, fromY, toX, toY);
+    this.blinkPuff(fromX, fromY);
+    this.blinkPuff(toX, toY);
+
+    q.x = toX;
+    q.y = toY;
+    // Drop the knockback and the old wander goal, or she slides or drifts
+    // straight back toward the spot she just left
+    q.vx = 0; q.vy = 0;
+    q.bossWanderTarget = null;
+    q.queenTelegraph = 0;
+    // Blinking out of a meal has to let the card go, or it keeps the chewing
+    // shake forever with nothing standing on it
+    q.eatingTimer = 0;
+    if (q.targetEl) (q.targetEl as HTMLElement).style.transform = "";
+  }
+
+  /**
+   * Freeze every ball caught by the blink — either lying on the thread or
+   * inside the silk bulb at one of its ends. The hold itself lives in the yarn
+   * cursor; the knot here is so the player can see why their ball stopped.
+   */
+  private snareOnThread(q: Monster, x1: number, y1: number, x2: number, y2: number) {
+    const getBalls = (window as any).__yarnCursorGetAllBallPositions;
+    const freeze = (window as any).__yarnCursorFreezeBallAt;
+    if (!getBalls || !freeze) return;
+
+    const reach = this.threadHalfWidth(q);
+    const aura = this.auraRadius(q);
+    for (const b of getBalls()) {
+      const caught =
+        distToSegment(b.x, b.y, x1, y1, x2, y2) <= reach + b.radius
+        || Math.hypot(b.x - x1, b.y - y1) <= aura + b.radius
+        || Math.hypot(b.x - x2, b.y - y2) <= aura + b.radius;
+      if (!caught) continue;
+      if (!freeze(b.x, b.y, QUEEN_FREEZE_TIME)) continue;
+      this.silkKnots.push({ x: b.x, y: b.y, left: QUEEN_FREEZE_TIME, total: QUEEN_FREEZE_TIME });
+      for (let i = 0; i < 16; i++) {
+        const a = Math.random() * Math.PI * 2;
+        const sp = 70 + Math.random() * 150;
+        this.particles.push({
+          x: b.x, y: b.y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+          life: 0.5, maxLife: 0.5, size: 2 + Math.random() * 3,
+          color: Math.random() < 0.5 ? QUEEN_COLORS.strand : QUEEN_COLORS.strandHot,
+        });
+      }
+    }
+  }
+
+  /** Silk scattering at one end of a blink. */
+  private blinkPuff(x: number, y: number) {
+    for (let i = 0; i < 14; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const sp = 90 + Math.random() * 200;
+      this.particles.push({
+        x, y, vx: Math.cos(a) * sp, vy: Math.sin(a) * sp,
+        life: 0.45, maxLife: 0.45, size: 2 + Math.random() * 4,
+        color: Math.random() < 0.5 ? QUEEN_COLORS.strand : QUEEN_COLORS.accent,
+      });
     }
   }
 
   private updateQueen(m: Monster, dt: number) {
+    // Planted while she spins the thread, in every phase, so the line the
+    // player is reading does not crawl out from under them mid-telegraph. In
+    // the last phase this also pauses her chewing, which is the only respite
+    // the blink hands back to the player once she is loose on the cards.
+    const telegraphing = m.queenTelegraph > 0;
+
     if (m.hp <= QUEEN_PHASE3_HP) {
-      this.queenRampage(m, dt);
+      if (!telegraphing) this.queenRampage(m, dt);
       return;
     }
 
-    this.wander(m, dt, 70);
+    if (!telegraphing) this.wander(m, dt, 70);
 
     const card = this.findNearestCard(m.x, m.y);
     if (!card) return;
@@ -1450,7 +1468,7 @@ export class MonsterManager {
     if (m.queenRingTimer <= 0) {
       const cards = this.getAliveCards();
       for (let i = 0; i < QUEEN_RING_COUNT; i++) {
-        const a = (i / QUEEN_RING_COUNT) * Math.PI * 2 + m.queenSpin;
+        const a = (i / QUEEN_RING_COUNT) * Math.PI * 2 + m.wingPhase * 0.3;
         const dest = cards[Math.floor(Math.random() * cards.length)] ?? card;
         this.fireProjectile(m, dest, a, QUEEN_COLORS.ring, m.size * 0.9);
       }
@@ -1512,7 +1530,9 @@ export class MonsterManager {
     const scrollY = window.scrollY;
     const scrollDelta = scrollY - prevScrollY;
     if (scrollDelta !== 0) {
-      for (const m of this.monsters) { m.y -= scrollDelta; m.targetY -= scrollDelta; }
+      // Silk knots are anchored to the yarn, which lives in pure screen space,
+      // so they deliberately do not shift with the page
+      for (const m of this.monsters) { m.y -= scrollDelta; m.targetY -= scrollDelta; m.queenDestY -= scrollDelta; }
       for (const p of this.projectiles) { p.y -= scrollDelta; }
       for (const p of this.particles) { p.y -= scrollDelta; }
       for (const p of this.eatParticles) { p.y -= scrollDelta; }
@@ -1522,6 +1542,7 @@ export class MonsterManager {
     if (this.paused || this.gameOver) {
       // Never leave the player's yarn pinned while the game isn't running
       for (const m of this.monsters) this.releaseWeb(m);
+      this.clearSilk();
       this.updateParticles(dt);
       return;
     }
@@ -1586,7 +1607,7 @@ export class MonsterManager {
       if (m.flashTimer > 0) m.flashTimer -= dt;
       if (m.isShielded || m.isBoss) for (let i = 0; i < 8; i++) if (m.shieldFlash[i] > 0) m.shieldFlash[i] -= dt;
 
-      if (m.isQueen) this.tickQueenCage(m, dt);
+      if (m.isQueen) this.tickQueenBlink(m, dt);
 
       if (m.isBoss) {
         const prevInvuln = m.bossInvulnTimer;
@@ -1891,6 +1912,9 @@ export class MonsterManager {
       p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 100 * dt; p.life -= dt;
     }
     compact(this.eatParticles, p => p.life > 0);
+    // Mirrors the freeze timer the yarn cursor is running on the ball itself
+    for (const k of this.silkKnots) k.left -= dt;
+    compact(this.silkKnots, k => k.left > 0);
   }
 
   draw(ctx: CanvasRenderingContext2D, time: number) {
@@ -1908,6 +1932,26 @@ export class MonsterManager {
       ctx.globalAlpha = Math.min(1, t * 2.5); ctx.fillStyle = p.color;
       const s = p.size * (0.3 + t * 0.7);
       ctx.fillRect(p.x - s / 2, p.y - s / 2, s, s);
+    }
+
+    // ── Silk knots: yarn stuck to one of the Loom Queen's threads ──
+    // Drawn under the monsters, at the ball, for exactly as long as the hold
+    // lasts. The strands wind tighter as it wears off, so the player can read
+    // how much longer they are stuck.
+    for (const k of this.silkKnots) {
+      const t = k.left / k.total;
+      ctx.globalAlpha = Math.min(1, t * 3);
+      for (let i = 0; i < 8; i++) {
+        const a = (i / 8) * Math.PI * 2 + (1 - t) * 2.4;
+        const reach = 10 + t * 22;
+        ctx.fillStyle = i % 2 === 0 ? QUEEN_COLORS.strand : QUEEN_COLORS.strandHot;
+        for (let j = 1; j <= 4; j++) {
+          const r = (j / 4) * reach;
+          ctx.fillRect(Math.round(k.x + Math.cos(a) * r - 1.5), Math.round(k.y + Math.sin(a) * r - 1.5), 3, 3);
+        }
+      }
+      ctx.fillStyle = QUEEN_COLORS.strandHot;
+      ctx.fillRect(Math.round(k.x - 2.5), Math.round(k.y - 2.5), 5, 5);
     }
     ctx.globalAlpha = prevAlpha;
 
@@ -2060,31 +2104,62 @@ export class MonsterManager {
         px(-1.3 * p, -1.2 * p + bob, 0.7 * p, 1.4 * p);
         px(0.6 * p, -1.2 * p + bob, 0.7 * p, 1.4 * p);
 
-        // ── The cage: silk strands she hides behind ──
-        for (const w of m.queenWalls) {
-          if (w.hp <= 0) continue;
-          // Same geometry the collision uses, shifted into the queen's local space
-          const seg = this.wallSegment(m, w);
-          const x1 = seg.x1 - m.x, y1 = seg.y1 - m.y;
-          const dx = seg.x2 - seg.x1, dy = seg.y2 - seg.y1;
-          const len = Math.hypot(dx, dy);
-          const nx = -dy / len, ny = dx / len; // strand normal, for the barbs
-          const flash = w.flash > 0;
-          ctx.fillStyle = flash ? q.strandHit : q.strand;
-          ctx.globalAlpha = flash ? 1 : (w.hp >= QUEEN_WALL_HP ? 0.95 : 0.6);
-          const steps = Math.max(12, Math.round(len / 11));
+        // ── The thread she is about to travel ──
+        // Same geometry the freeze check uses, in her local space. It thickens
+        // and heats up as the telegraph runs out, so "how long have I got" is
+        // readable without counting, and the landing spot is marked outright.
+        if (m.queenTelegraph > 0) {
+          const charge = 1 - m.queenTelegraph / m.queenTelegraphMax;
+          const dx = m.queenDestX - m.x;
+          const dy = m.queenDestY - m.y;
+          const len = Math.hypot(dx, dy) || 1;
+          const nx = -dy / len, ny = dx / len; // thread normal
+          const hot = charge > 0.65;
+          // Always the true collision sizes. Growing them during the telegraph
+          // would mean the safe-looking gap the player commits to is a lie.
+          const half = this.threadHalfWidth(m);
+          const aura = this.auraRadius(m);
+
+          ctx.fillStyle = hot ? q.strandHot : q.strand;
+
+          // The swept band, filled so the hazard reads as an area rather than
+          // as a line with two loose rails beside it
+          ctx.globalAlpha = 0.1 + charge * 0.18;
+          ctx.beginPath();
+          ctx.moveTo(nx * half, ny * half);
+          ctx.lineTo(dx + nx * half, dy + ny * half);
+          ctx.lineTo(dx - nx * half, dy - ny * half);
+          ctx.lineTo(-nx * half, -ny * half);
+          ctx.closePath();
+          ctx.fill();
+
+          // The bulbs she leaves from and arrives into
+          ctx.beginPath();
+          ctx.arc(0, 0, aura, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(dx, dy, aura, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.globalAlpha = 0.5 + charge * 0.5;
+          const steps = Math.max(16, Math.round(len / 10));
           for (let i = 0; i <= steps; i++) {
             const t = i / steps;
             const sz = i % 2 === 0 ? 6 : 4;
-            px(x1 + dx * t - sz / 2, y1 + dy * t - sz / 2, sz, sz);
+            px(dx * t - sz / 2, dy * t - sz / 2, sz, sz);
+            // Fray marking the exact edge of what will catch the yarn
+            px(dx * t + nx * half - 1.5, dy * t + ny * half - 1.5, 3, 3);
+            px(dx * t - nx * half - 1.5, dy * t - ny * half - 1.5, 3, 3);
           }
-          // Barbs along an intact strand; a frayed one loses them
-          if (w.hp >= QUEEN_WALL_HP) {
-            for (let i = 1; i < 6; i++) {
-              const t = i / 6;
-              px(x1 + dx * t - nx * 5 - 1.5, y1 + dy * t - ny * 5 - 1.5, 3, 3);
-              px(x1 + dx * t + nx * 5 - 1.5, y1 + dy * t + ny * 5 - 1.5, 3, 3);
-            }
+
+          // Dotted rims on both bulbs, at their true radius. They counter-rotate
+          // so the pair reads as one hazard being drawn tight.
+          ctx.globalAlpha = 0.6 + charge * 0.4;
+          const rim = Math.max(14, Math.round(aura / 7));
+          for (let i = 0; i < rim; i++) {
+            const a = (i / rim) * Math.PI * 2 + charge * 2.2;
+            px(Math.cos(a) * aura - 2, Math.sin(a) * aura - 2, 4, 4);
+            px(dx + Math.cos(-a) * aura - 2, dy + Math.sin(-a) * aura - 2, 4, 4);
           }
         }
         ctx.globalAlpha = 1;
@@ -2535,6 +2610,7 @@ export class MonsterManager {
   cleanup() {
     const releaseAll = (window as any).__yarnCursorReleaseAllWebs;
     if (releaseAll) releaseAll();
+    this.clearSilk();
     for (const m of this.monsters) {
       if (m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
     }

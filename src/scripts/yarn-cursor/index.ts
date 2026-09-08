@@ -19,6 +19,10 @@ interface RopeEntry {
   rope: VerletRope;
   ball: YarnBall;
   color: string;
+  /** Seconds left stuck in place, and where — see freezeBallAt(). */
+  frozen: number;
+  frozenX: number;
+  frozenY: number;
 }
 let ropes: RopeEntry[] = [];
 
@@ -123,7 +127,7 @@ function addBall() {
     const newRope = new VerletRope(mouseX, mouseY, cfg.numPoints, cfg.segLen);
     const newBall = new YarnBall(14, cfg.color);
     newBall.radiusBonus = ballRadiusBonus;
-    ropes.push({ rope: newRope, ball: newBall, color: cfg.color });
+    ropes.push({ rope: newRope, ball: newBall, color: cfg.color, frozen: 0, frozenX: 0, frozenY: 0 });
   }
 }
 (window as any).__yarnCursorAddBall = addBall;
@@ -177,6 +181,76 @@ function applyImpulse(x: number, y: number, ix: number, iy: number) {
 }
 (window as any).__yarnCursorApplyImpulse = applyImpulse;
 
+// ── Hard freezes (the Loom Queen's silk lines) ──
+// A web is a struggle you whip out of; a freeze is a flat timed punishment for
+// standing somewhere the game told you not to. It grips the ball end itself
+// rather than a mid-rope point, so the ball stops dead instead of swinging.
+
+/** Freeze the ball nearest (x, y) — same nearest-ball rule as applyImpulse. */
+function freezeBallAt(x: number, y: number, seconds: number): boolean {
+  if (gyroActive) {
+    let best: GyroBall | null = null;
+    let bestDist = Infinity;
+    for (const gb of gyroBalls) {
+      const d = (gb.x - x) ** 2 + (gb.y - y) ** 2;
+      if (d < bestDist) { bestDist = d; best = gb; }
+    }
+    if (!best) return false;
+    best.freeze(seconds);
+    return true;
+  }
+
+  let bestEntry: RopeEntry | null = null;
+  let bestDist = Infinity;
+  for (const entry of ropes) {
+    const pts = entry.rope.points;
+    const last = pts[pts.length - 1];
+    const d = (last.x - x) ** 2 + (last.y - y) ** 2;
+    if (d < bestDist) { bestDist = d; bestEntry = entry; }
+  }
+  if (!bestEntry) return false;
+
+  const pts = bestEntry.rope.points;
+  const last = pts[pts.length - 1];
+  bestEntry.frozen = Math.max(bestEntry.frozen, seconds);
+  bestEntry.frozenX = last.x;
+  bestEntry.frozenY = last.y;
+  last.locked = true;
+  return true;
+}
+(window as any).__yarnCursorFreezeBallAt = freezeBallAt;
+
+/** Thaw everything — the game calls this whenever it stops running. */
+function clearFreezes() {
+  for (const entry of ropes) {
+    if (entry.frozen <= 0) continue;
+    entry.frozen = 0;
+    const pts = entry.rope.points;
+    pts[pts.length - 1].locked = false;
+  }
+  for (const gb of gyroBalls) gb.freezeLeft = 0;
+}
+(window as any).__yarnCursorClearFreezes = clearFreezes;
+
+/** Re-pin frozen ball ends after the solver has run; unlock when time is up. */
+function tickFreezes(dt: number) {
+  for (const entry of ropes) {
+    if (entry.frozen <= 0) continue;
+    entry.frozen -= dt;
+    const pts = entry.rope.points;
+    const last = pts[pts.length - 1];
+    if (entry.frozen <= 0) {
+      entry.frozen = 0;
+      last.locked = false;
+      continue;
+    }
+    last.x = entry.frozenX;
+    last.y = entry.frozenY;
+    last.prevX = entry.frozenX;
+    last.prevY = entry.frozenY;
+  }
+}
+
 // ── Set radius bonus (called by upgrade system) ──
 function setRadiusBonus(bonus: number) {
   ballRadiusBonus = bonus;
@@ -212,7 +286,9 @@ function animate(time: number) {
 
   if (shouldShowCursor()) {
     for (const entry of ropes) entry.rope.update(mouseX, mouseY, dt);
-    // Re-pin webbed points after the solver has run, before anything is drawn
+    // Re-pin webbed and frozen points after the solver has run, before anything
+    // is drawn
+    tickFreezes(dt);
     webAnchors.update(dt);
     // Draw extra balls first (behind primary)
     for (let i = ropes.length - 1; i >= 0; i--) {
@@ -240,6 +316,8 @@ function onTouchMove(e: TouchEvent) {
 
 function setAttackersEnabled(value: boolean) {
   attackersEnabled = value;
+  // Toggling must never strand the cursor mid-freeze
+  clearFreezes();
   localStorage.setItem("attackers-enabled", String(attackersEnabled));
   syncButton();
   const toast = (window as any).__gameShowToast;
@@ -314,7 +392,7 @@ function init() {
   // Primary rope + ball
   const primaryRope = new VerletRope(mouseX, mouseY);
   const primaryBall = new YarnBall();
-  ropes = [{ rope: primaryRope, ball: primaryBall, color: "#ff6b6b" }];
+  ropes = [{ rope: primaryRope, ball: primaryBall, color: "#ff6b6b", frozen: 0, frozenX: 0, frozenY: 0 }];
 
   window.addEventListener("resize", resize);
   document.addEventListener("mousemove", onMouseMove);
