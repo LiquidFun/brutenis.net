@@ -17,6 +17,12 @@ const SIZES = "(max-width: 560px) 100vw, (max-width: 2700px) 60vw, (max-width: 3
 // Photos above the fold load eagerly; everything else waits for the viewport.
 const EAGER_COUNT = 4;
 let rendered = 0;
+
+// A card is 15rem wide, and the root font size is 120%, so 288px — exact here,
+// unlike the grid's estimate, because the card width is fixed by CSS.
+const COVER_SIZES = "(max-width: 640px) 31vw, 288px";
+/** Covers past the first row or two wait for the viewport like anything else. */
+const EAGER_COVERS = 6;
 ---
 
 <BaseLayout
@@ -35,8 +41,44 @@ let rendered = 0;
   }
 
   {
+    albums.length > 1 && (
+      <nav class="album-index" aria-label="Albums">
+        <ul class="album-index-list">
+          {albums.map((album, i) => {
+            // The cover chosen in Immich, falling back to the album's first
+            // photo — which is the one @lib/immich-loader leads with, rated
+            // highest or newest. The fallback covers an album with no cover
+            // set, and the case where the cover asset itself failed to encode.
+            const cover =
+              album.data.photos.find((p) => p.id === album.data.coverId) ?? album.data.photos[0]!;
+            return (
+              <li class="album-index-item">
+                {/* A real fragment link: the browser scrolls and puts the album
+                    in the URL, so the entry is shareable and works without JS. */}
+                <a class="album-index-card" href={`#${album.data.slug}`}>
+                  <img
+                    src={cover.renditions[0].url}
+                    srcset={cover.renditions.map((r) => `${r.url} ${r.width}w`).join(", ")}
+                    sizes={COVER_SIZES}
+                    width={cover.renditions[0].width}
+                    height={cover.renditions[0].height}
+                    alt=""
+                    loading={i < EAGER_COVERS ? "eager" : "lazy"}
+                    decoding="async"
+                  />
+                  <span class="album-index-title">{album.data.title}</span>
+                </a>
+              </li>
+            );
+          })}
+        </ul>
+      </nav>
+    )
+  }
+
+  {
     albums.map((album) => (
-      <section class="photo-album" data-album-title={album.data.title}>
+      <section class="photo-album" id={album.data.slug} data-album-title={album.data.title}>
         {/* The bare name stays the collection's title and each photo's alt text;
             the "Album" framing is presentation only. */}
         <h2 class="photo-album-title">
@@ -45,6 +87,9 @@ let rendered = 0;
         <div class="photo-grid">
           {album.data.photos.map((photo) => {
             const eager = rendered++ < EAGER_COUNT;
+            // The data-exif-* attributes feed the lightbox's info panel. Astro
+            // drops an attribute whose value is undefined, so a photo with no
+            // EXIF carries none of them and the panel's button stays hidden.
             return (
               <a
                 class="photo-item"
@@ -52,6 +97,9 @@ let rendered = 0;
                 data-full={photo.full.url}
                 data-full-width={photo.full.width}
                 data-full-height={photo.full.height}
+                data-exif-camera={photo.exif.camera || undefined}
+                data-exif-lens={photo.exif.lens || undefined}
+                data-exif-settings={photo.exif.settings.join(" · ") || undefined}
               >
                 <img
                   src={photo.src}
@@ -70,15 +118,25 @@ let rendered = 0;
       </section>
     ))
   }
+
+  <button class="photo-to-top" type="button" aria-label="Back to top" title="Back to top">
+    &#8593;
+  </button>
 </BaseLayout>
 
 <script>
   import { initGallery, teardownGallery } from "@scripts/photos/gallery";
   import { initLightbox, teardownLightbox } from "@scripts/photos/lightbox";
+  import { initAlbumIndex, restoreScroll, teardownAlbumIndex } from "@scripts/photos/album-index";
 
   function init() {
     initGallery();
     initLightbox();
+    initAlbumIndex();
+    // After the gallery: a fragment, and the position restored after a reload,
+    // were both resolved against the pre-layout page, where the rows are a
+    // placeholder height.
+    restoreScroll();
   }
 
   document.addEventListener("astro:page-load", init);
@@ -87,6 +145,7 @@ let rendered = 0;
   document.addEventListener("astro:before-swap", () => {
     teardownGallery();
     teardownLightbox();
+    teardownAlbumIndex();
   });
 </script>
 
@@ -94,6 +153,130 @@ let rendered = 0;
   elements never carry Astro's scoping attribute. The grid rules are global for
   the same reason - the classes that drive them are toggled at runtime. -->
 <style is:global>
+  /* --- album index ------------------------------------------------------ */
+
+  .album-index {
+    margin: 0 auto 2.5rem;
+    padding-bottom: 2rem;
+    border-bottom: 2px dashed rgba(99, 110, 114, 0.25);
+  }
+
+  .album-index-list {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 1rem 1.25rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  /* Fixed width rather than a fraction of the row: the cards should be the same
+     size whether there are three albums or thirty, and wrap when they run out
+     of room, rather than a lone album on the last row blowing up to fill it. */
+  .album-index-item {
+    width: 15rem;
+  }
+
+  .album-index-card {
+    display: block;
+    text-align: center;
+    /* Cancels the dashed link underline from global.css. */
+    border-bottom: none;
+  }
+
+  /* A uniform square crop, so the row reads as one strip regardless of how the
+     cover photos are oriented. The full photo is a scroll away. */
+  .album-index-card img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background: var(--color-bg-warm);
+    transition:
+      transform 0.15s ease,
+      border-color 0.15s ease;
+  }
+
+  .album-index-card:hover img,
+  .album-index-card:focus-visible img {
+    transform: translateY(-3px);
+    border-color: var(--color-yarn-coral);
+  }
+
+  .album-index-title {
+    display: block;
+    margin-top: 0.4rem;
+    font-family: var(--font-heading);
+    font-size: 1.05rem;
+    line-height: 1.2;
+    color: var(--color-text-charcoal);
+    transition: color 0.15s ease;
+  }
+
+  .album-index-card:hover .album-index-title,
+  .album-index-card:focus-visible .album-index-title {
+    color: var(--color-yarn-coral);
+  }
+
+  /* --- back to top ------------------------------------------------------ */
+
+  /* Bottom right: the game HUD is bottom-centre on touch devices and pinned to
+     the nav bar on desktop, so this corner is free in both. Below the lightbox
+     (z-index 10000) and the HUD (100), above the yarn canvases (60/61). */
+  /* Coral on cream, not the reverse: a pale circle with a thin outline
+     disappeared against a bright photo, which is what the corner of this page is
+     made of. Filled, it reads as a button from across the screen — and it
+     matches the site's other primary actions. */
+  .photo-to-top {
+    position: fixed;
+    right: 1rem;
+    bottom: 1.25rem;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 3rem;
+    padding: 0;
+    border-radius: 50%;
+    border: 2px dashed rgba(254, 249, 239, 0.6);
+    background: var(--color-yarn-coral);
+    color: var(--color-bg-cream);
+    font-family: var(--font-heading);
+    font-size: 1.7rem;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow:
+      0 2px 12px rgba(255, 107, 107, 0.45),
+      0 2px 6px rgba(0, 0, 0, 0.2);
+    /* Hidden until scrolled down. visibility, not display: the two states are
+       animated, and it must not take clicks while invisible. */
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(0.5rem);
+    transition:
+      opacity 0.2s ease,
+      transform 0.2s ease,
+      visibility 0.2s,
+      background 0.2s ease,
+      color 0.2s ease;
+  }
+
+  .photo-to-top-visible {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+  }
+
+  .photo-to-top:hover {
+    background: var(--color-accent-hover);
+    border-color: var(--color-bg-cream);
+    transform: translateY(-2px);
+  }
+
   /* --- album + justified grid ------------------------------------------- */
 
   .photo-album {
@@ -182,11 +365,17 @@ let rendered = 0;
 
   /* Above the yarn cursor canvas (z-index 9999), which would otherwise draw the
      ball over the photo. */
+  /* A column: photo above, caption below. The caption used to be absolutely
+     positioned over the bottom of the photo, which on a phone put the album name
+     across the picture every time; as a flex item it has its own space. The
+     camera details stay an overlay above it — they are asked for, so covering
+     part of the photo while they are up is the point. */
   .photo-lightbox {
     position: fixed;
     inset: 0;
     z-index: 10000;
     display: flex;
+    flex-direction: column;
     /* Almost opaque: at 0.95 the nav and album titles stayed legible through it. */
     background: rgba(20, 18, 16, 0.985);
   }
@@ -197,6 +386,9 @@ let rendered = 0;
 
   .photo-lightbox-stage {
     flex: 1;
+    /* Lets the stage shrink under its content, so the photo gives way to the
+       details panel rather than pushing it off the bottom. */
+    min-height: 0;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -220,9 +412,17 @@ let rendered = 0;
     cursor: grab;
   }
 
+  /* Flex-centred rather than relying on line-height: a glyph's box is not its
+     ink, and Kalam's × and chevrons all sit off-centre in it — the arrows used
+     to need a padding-bottom nudge to look level, and the × never did line up. */
   .photo-lightbox-close,
+  .photo-lightbox-info-btn,
   .photo-lightbox-nav {
     position: absolute;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
     font-family: var(--font-heading);
     color: var(--color-bg-cream);
     background: rgba(20, 18, 16, 0.45);
@@ -232,10 +432,24 @@ let rendered = 0;
     line-height: 1;
     transition:
       background 0.15s ease,
-      border-color 0.15s ease;
+      border-color 0.15s ease,
+      opacity 0.4s ease;
+  }
+
+  /* Out of the way once the viewer has been left alone; @scripts/photos/lightbox
+     sets the class and drops it on the next move, key or tap. The caption stays:
+     it is in the layout, so hiding it would resize the photo. */
+  .photo-lightbox-idle .photo-lightbox-close,
+  .photo-lightbox-idle .photo-lightbox-info-btn,
+  .photo-lightbox-idle .photo-lightbox-nav {
+    opacity: 0;
+    /* Nothing invisible should be clickable — and any pointer movement brings
+       them back before a click can land anyway. */
+    pointer-events: none;
   }
 
   .photo-lightbox-close:hover,
+  .photo-lightbox-info-btn:hover,
   .photo-lightbox-nav:hover {
     background: var(--color-yarn-coral);
     border-color: var(--color-bg-cream);
@@ -244,18 +458,33 @@ let rendered = 0;
   .photo-lightbox-close {
     top: 1rem;
     right: 1rem;
-    width: 2.75rem;
-    height: 2.75rem;
-    font-size: 2rem;
+    width: 2.2rem;
+    height: 2.2rem;
+    font-size: 1.5rem;
+  }
+
+  /* Left of the close button, one button width plus a gap. */
+  .photo-lightbox-info-btn {
+    top: 1rem;
+    right: 3.7rem;
+    width: 2.2rem;
+    height: 2.2rem;
+    font-size: 1.4rem;
+  }
+
+  /* Held open, so it reads as a state rather than a thing that was clicked. */
+  .photo-lightbox-info-btn-on {
+    background: var(--color-yarn-coral);
+    border-style: solid;
+    border-color: var(--color-bg-cream);
   }
 
   .photo-lightbox-nav {
     top: 50%;
     transform: translateY(-50%);
-    width: 3.25rem;
-    height: 3.25rem;
-    font-size: 2.75rem;
-    padding-bottom: 0.35rem;
+    width: 2.5rem;
+    height: 2.5rem;
+    font-size: 1.9rem;
   }
 
   .photo-lightbox-prev {
@@ -266,15 +495,70 @@ let rendered = 0;
     right: 1rem;
   }
 
+  /* Caption and camera details as one bottom-centred column: the details grow
+     it upwards, so the caption does not move when they are revealed. Clicks
+     pass through to the stage, which is what closes the viewer. */
+  .photo-lightbox-meta {
+    position: relative;
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 0.55rem 1rem 0.8rem;
+    text-align: center;
+    pointer-events: none;
+  }
+
+  /* One line, always: an album with a long name used to wrap the caption onto a
+     second row, which grew the strip and shrank the photo by a line's worth for
+     that album alone. */
   .photo-lightbox-counter {
+    max-width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-family: var(--font-heading);
+    font-size: 1.15rem;
+    color: rgba(254, 249, 239, 0.75);
+  }
+
+  /* Floats over the bottom of the photo rather than taking a row of its own, so
+     opening it does not resize the picture you are looking at.
+     `width: max-content` with a max-width, rather than plain shrink-to-fit: an
+     absolutely positioned box offset from the left edge can only use what is
+     left of the line, which squeezed it into half the width of a phone. */
+  .photo-lightbox-info {
     position: absolute;
-    bottom: 1rem;
+    bottom: 100%;
     left: 50%;
     transform: translateX(-50%);
+    width: max-content;
+    max-width: calc(100vw - 2rem);
+    margin-bottom: 0.4rem;
+    padding: 0.5rem 1.1rem;
+    border-radius: 0.75rem;
+    border: 2px dashed rgba(254, 249, 239, 0.3);
+    background: rgba(20, 18, 16, 0.55);
+    color: var(--color-bg-cream);
+    line-height: 1.45;
+  }
+
+  .photo-lightbox-info-camera {
     font-family: var(--font-heading);
-    font-size: 1.25rem;
-    color: rgba(254, 249, 239, 0.75);
-    pointer-events: none;
+    font-size: 1.2rem;
+  }
+
+  .photo-lightbox-info-lens {
+    font-size: 1rem;
+    color: rgba(254, 249, 239, 0.8);
+  }
+
+  /* Monospace, like the rest of the site's numbers: these are read as values. */
+  .photo-lightbox-info-settings {
+    margin-top: 0.15rem;
+    font-family: var(--font-mono);
+    font-size: 0.85rem;
+    color: var(--color-yarn-teal);
   }
 
   @media (max-width: 640px) {
@@ -282,10 +566,41 @@ let rendered = 0;
       font-size: 1.6rem;
     }
 
+    /* Three per row, not two: at two the index alone filled the whole first
+       screen and pushed every album below the fold, which is the opposite of
+       what it is for. A third of the width, less its share of the column gap. */
+    .album-index-list {
+      gap: 0.85rem 0.75rem;
+    }
+
+    .album-index-item {
+      width: calc(33.333% - 0.5rem);
+    }
+
+    .album-index-title {
+      margin-top: 0.3rem;
+      font-size: 0.85rem;
+    }
+
+    /* Smaller, since the arrows take a larger share of a phone screen — but not
+       below 2.3rem, which at the 120% root size is the 44px a thumb needs. */
     .photo-lightbox-nav {
-      width: 2.5rem;
-      height: 2.5rem;
-      font-size: 2rem;
+      width: 2.3rem;
+      height: 2.3rem;
+      font-size: 1.75rem;
+    }
+
+    .photo-lightbox-counter {
+      font-size: 0.9rem;
+    }
+
+    .photo-lightbox-info-camera {
+      font-size: 1.05rem;
+    }
+
+    .photo-lightbox-info-lens,
+    .photo-lightbox-info-settings {
+      font-size: 0.8rem;
     }
 
     .photo-lightbox-prev {

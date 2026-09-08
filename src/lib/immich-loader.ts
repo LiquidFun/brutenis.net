@@ -96,11 +96,28 @@ interface ImmichAsset {
   checksum?: string;
   fileCreatedAt?: string;
   localDateTime?: string;
-  exifInfo?: {
-    description?: string | null;
-    /** Immich's star rating, 1-5, or null when unrated. */
-    rating?: number | null;
-  } | null;
+  exifInfo?: ImmichExif | null;
+}
+
+/**
+ * The EXIF fields Immich reports with `withExif`. Location (latitude, longitude,
+ * city, country) is deliberately not read: it is in the response, and publishing
+ * where a photo was taken is a different decision from publishing the photo.
+ */
+interface ImmichExif {
+  description?: string | null;
+  /** Immich's star rating, 1-5, or null when unrated. */
+  rating?: number | null;
+  make?: string | null;
+  model?: string | null;
+  lensModel?: string | null;
+  /** Millimetres, often fractional. */
+  focalLength?: number | null;
+  fNumber?: number | null;
+  /** Already a display string, "1/250" or "2.5". */
+  exposureTime?: string | null;
+  iso?: number | null;
+  dateTimeOriginal?: string | null;
 }
 
 interface ImmichSharedLink {
@@ -113,6 +130,8 @@ interface ImmichSharedLink {
     albumName?: string;
     description?: string | null;
     assetCount?: number;
+    /** The asset picked as the album's cover in Immich. */
+    albumThumbnailAssetId?: string | null;
     /** "asc" or "desc" — the order the album is presented in inside Immich. */
     order?: string;
     /** Only older servers nested the asset list here. */
@@ -127,6 +146,15 @@ interface Rendition {
   url: string;
 }
 
+/** What the lightbox's info panel shows, formatted here rather than in script. */
+export interface PhotoExif {
+  /** Make and model as one name, e.g. "Sony α6700". */
+  camera: string;
+  lens: string;
+  /** Focal length, aperture, shutter, ISO and date — whichever the file has. */
+  settings: string[];
+}
+
 export interface Photo {
   id: string;
   /** Dimensions of the largest rendition, i.e. the aspect ratio to lay out with. */
@@ -138,6 +166,7 @@ export interface Photo {
   /** Largest rendition, opened by the lightbox. */
   full: Rendition;
   alt: string;
+  exif: PhotoExif;
 }
 
 export interface PhotoAlbum {
@@ -145,6 +174,12 @@ export interface PhotoAlbum {
   slug: string;
   description: string;
   order: number;
+  /**
+   * Id of the photo Immich uses as the album's cover, which is what the index on
+   * /photography shows. Empty when the server named no cover, or named one that
+   * is not among the photos below — the page then falls back to the first photo.
+   */
+  coverId: string;
   photos: Photo[];
 }
 
@@ -187,6 +222,56 @@ function slugify(value: string): string {
  */
 function stripAlbumTag(name: string | undefined): string | undefined {
   return name?.replace(/^\s*\[[^\]]*\]\s*/, "").trim() || name;
+}
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/**
+ * Camera make and model as the one name a reader expects.
+ *
+ * Makers write the make in capitals and usually repeat it in the model
+ * ("NIKON CORPORATION" + "NIKON D750"), and Sony records its internal code
+ * rather than the name on the box — an ILCE-6700 is sold as the α6700.
+ */
+function cameraName(make: string | null | undefined, model: string | null | undefined): string {
+  const name = (model ?? "").trim().replace(/^ILCE-/, "α");
+  let brand = (make ?? "").trim().replace(/\s+corporation$/i, "");
+  if (brand && brand === brand.toUpperCase()) {
+    brand = brand.charAt(0) + brand.slice(1).toLowerCase();
+  }
+  if (!name) return brand;
+  if (!brand || name.toLowerCase().startsWith(brand.toLowerCase())) return name;
+  return `${brand} ${name}`;
+}
+
+/**
+ * The date the shutter fired, as the camera recorded it.
+ *
+ * Read off the string rather than through Date: the timestamp carries the
+ * offset it was taken at, and parsing it would render it in the build machine's
+ * zone, which can move a late-evening photo to the next day.
+ */
+function shotDate(dateTimeOriginal: string | null | undefined): string {
+  const parts = /^(\d{4})-(\d{2})-(\d{2})/.exec(dateTimeOriginal ?? "");
+  if (!parts) return "";
+  return `${Number(parts[3])} ${MONTHS[Number(parts[2]) - 1]} ${parts[1]}`;
+}
+
+/** Everything the info panel shows about how a photo was taken. */
+function describeCamera(exif: ImmichExif | null | undefined): PhotoExif {
+  const settings: string[] = [];
+  if (exif?.focalLength) settings.push(`${Math.round(exif.focalLength)} mm`);
+  if (exif?.fNumber) settings.push(`f/${exif.fNumber}`);
+  if (exif?.exposureTime) settings.push(`${exif.exposureTime} s`);
+  if (exif?.iso) settings.push(`ISO ${exif.iso}`);
+  const taken = shotDate(exif?.dateTimeOriginal);
+  if (taken) settings.push(taken);
+
+  return {
+    camera: cameraName(exif?.make, exif?.model),
+    lens: (exif?.lensModel ?? "").trim(),
+    settings,
+  };
 }
 
 /** Splits https://host/share/<key> into the API origin and the share key. */
@@ -600,6 +685,7 @@ async function loadAlbum(
     slug,
     description,
     order,
+    coverId: link.album?.albumThumbnailAssetId ?? "",
     photos: photos.filter((p): p is Photo => p !== null),
   };
   if (album.photos.length === 0) {
@@ -631,7 +717,8 @@ function loadCachedAlbum(
   const cached: PhotoAlbum = JSON.parse(readFileSync(metaPath, "utf-8"));
   copyRenditions(cached, renditionCache, logger);
   logger.warn(`Album "${cached.title}": reusing ${cached.photos.length} cached photos (${reason})`);
-  return { ...cached, order };
+  // coverId is absent from metadata written before covers existed.
+  return { ...cached, coverId: cached.coverId ?? "", order };
 }
 
 /** Copies a cached album's renditions back into public/photos/. */
@@ -764,5 +851,8 @@ async function ensurePhoto(
     renditions,
     full,
     alt: caption || `${ctx.title} — photo ${index + 1}`,
+    // From the live asset, not the rendition cache, so this is current even for
+    // a photo whose files were reused.
+    exif: describeCamera(asset.exifInfo),
   };
 }

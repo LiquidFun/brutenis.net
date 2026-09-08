@@ -153,6 +153,17 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 </html>
 
 <style>
+  /* Slides away while reading down the page and comes back on the way up;
+     @scripts/fixed-nav owns the class. The body's padding is untouched, so
+     nothing reflows — only the bar itself moves. */
+  nav {
+    transition: transform 0.3s ease;
+  }
+
+  html.nav-collapsed nav {
+    transform: translateY(-100%);
+  }
+
   .nav-link {
     padding: 0.375rem 0.75rem;
     border-radius: 0.5rem;
@@ -327,6 +338,15 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
       /* Hold the pill's height when its text is hidden, so it does not twitch as
          the label and score come and go. */
       min-height: 2.55rem;
+      /* Matches the nav bar, which the pill rides with below. Shortened from the
+         0.5s that the mobile repositioning wants, so the two do not desync. */
+      transition-duration: 0.3s;
+    }
+
+    /* On desktop the pill sits inside the nav row, so it leaves with it —
+       otherwise it is left floating over the photos on its own. */
+    html.nav-collapsed .game-hud {
+      transform: translateY(-150%);
     }
 
     /* The button floats over the nav, so the links reserve room for it — but only

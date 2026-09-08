@@ -478,9 +478,19 @@ function initCheatPanel() {
     alignItems: "center",
   });
 
-  const addButton = (label: string, onClick: () => void) => {
-    const btn = document.createElement("button");
-    btn.textContent = label;
+  // The cheats live in their own row so that collapsing leaves nothing but the
+  // handle. Wrapping, and bounded by the viewport: six buttons are wider than a
+  // phone, and they used to run off the edge rather than onto a second line.
+  const row = document.createElement("div");
+  Object.assign(row.style, {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "8px",
+    alignItems: "center",
+    maxWidth: "calc(100vw - 80px)",
+  });
+
+  const styleButton = (btn: HTMLButtonElement) => {
     Object.assign(btn.style, {
       background: "#ff6b6b",
       color: "#fff",
@@ -491,10 +501,45 @@ function initCheatPanel() {
       fontFamily: "inherit",
       fontSize: "13px",
     });
+  };
+
+  const addButton = (label: string, onClick: () => void) => {
+    const btn = document.createElement("button");
+    btn.textContent = label;
+    styleButton(btn);
     btn.addEventListener("click", onClick);
-    panel.appendChild(btn);
+    row.appendChild(btn);
     return btn;
   };
+
+  /**
+   * Collapsed to a "dev" chip, so the panel stops covering the page it is meant
+   * to help test — on a phone the expanded row sits right on top of the lightbox
+   * caption and the back-to-top button.
+   *
+   * The choice is remembered because a client-side navigation replaces <body>
+   * and this panel with it, so the state cannot live in the element. Unset means
+   * collapsed on a narrow screen and open on a wide one, which is where each is
+   * in the way or not.
+   */
+  const STORAGE_KEY = "cheat-panel-collapsed";
+  const stored = localStorage.getItem(STORAGE_KEY);
+  let collapsed = stored === null ? window.innerWidth <= 640 : stored === "true";
+
+  const handle = document.createElement("button");
+  handle.title = "Toggle dev panel";
+  styleButton(handle);
+  Object.assign(handle.style, { background: "#444", padding: "4px 8px" });
+
+  const applyCollapsed = () => {
+    row.style.display = collapsed ? "none" : "flex";
+    handle.textContent = collapsed ? "dev" : "×";
+  };
+  handle.addEventListener("click", () => {
+    collapsed = !collapsed;
+    localStorage.setItem(STORAGE_KEY, String(collapsed));
+    applyCollapsed();
+  });
 
   addButton("Next Level", () => monsters?.skipToNextLevel());
   // Bosses only spawn into an empty field, so clearing is the fastest way in
@@ -512,6 +557,8 @@ function initCheatPanel() {
       : (dmg: number) => upgrades!.absorbDamage(dmg);
   });
 
+  applyCollapsed();
+  panel.append(handle, row);
   document.body.appendChild(panel);
 }
 

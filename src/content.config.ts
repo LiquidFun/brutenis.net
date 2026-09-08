@@ -103,6 +103,8 @@ const photos = defineCollection({
     description: z.string().default(""),
     /** Position in src/data/photo-albums.ts, which is the page order. */
     order: z.number(),
+    /** Album cover in Immich; "" when it named none. See PhotoAlbum.coverId. */
+    coverId: z.string().default(""),
     photos: z.array(
       z.object({
         id: z.string(),
@@ -112,6 +114,14 @@ const photos = defineCollection({
         renditions: z.array(renditionSchema).nonempty(),
         full: renditionSchema,
         alt: z.string(),
+        /** Camera details for the lightbox; empty for a photo without EXIF. */
+        exif: z
+          .object({
+            camera: z.string().default(""),
+            lens: z.string().default(""),
+            settings: z.array(z.string()).default([]),
+          })
+          .default({}),
       }),
     ),
   }),

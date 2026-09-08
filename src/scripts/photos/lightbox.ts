@@ -17,6 +17,8 @@ const DOUBLE_TAP_SCALE = 2.5;
 const SWIPE_THRESHOLD = 60;
 /** Pointer travel above which a release is a drag, not a click. */
 const DRAG_SLOP = 6;
+/** Quiet time before the buttons fade out, leaving only the photo. */
+const CONTROLS_IDLE_MS = 2500;
 
 interface Slide {
   src: string;
@@ -28,6 +30,19 @@ interface Slide {
   /** 1-based position within that album, and the album's size. */
   positionInAlbum: number;
   albumSize: number;
+  /** Camera details, pre-formatted by @lib/immich-loader. "" when unknown. */
+  camera: string;
+  lens: string;
+  settings: string;
+}
+
+/** The info panel and the button that reveals it. */
+interface Info {
+  button: HTMLButtonElement;
+  root: HTMLElement;
+  camera: HTMLElement;
+  lens: HTMLElement;
+  settings: HTMLElement;
 }
 
 interface Lightbox {
@@ -37,6 +52,7 @@ interface Lightbox {
   counter: HTMLElement;
   prev: HTMLButtonElement;
   next: HTMLButtonElement;
+  info: Info;
 }
 
 let ui: Lightbox | null = null;
@@ -45,7 +61,30 @@ let index = 0;
 let scale = 1;
 let tx = 0;
 let ty = 0;
+/**
+ * Whether the camera details are showing. Deliberately module state: someone who
+ * asks for them once wants them on the next photo too, and for the rest of the
+ * visit.
+ */
+let infoOpen = false;
+let idleTimer = 0;
 let cleanups: (() => void)[] = [];
+
+/**
+ * Shows the buttons and starts the clock on hiding them again.
+ *
+ * Called from every sign of life — moving the pointer, pressing a key, touching
+ * the screen, changing photo — so the controls are there whenever someone is
+ * doing something and gone while they are just looking.
+ */
+function wakeControls(): void {
+  if (!ui) return;
+  ui.root.classList.remove("photo-lightbox-idle");
+  clearTimeout(idleTimer);
+  idleTimer = window.setTimeout(() => {
+    ui?.root.classList.add("photo-lightbox-idle");
+  }, CONTROLS_IDLE_MS);
+}
 
 function button(className: string, label: string, glyph: string): HTMLButtonElement {
   const el = document.createElement("button");
@@ -53,6 +92,12 @@ function button(className: string, label: string, glyph: string): HTMLButtonElem
   el.className = className;
   el.setAttribute("aria-label", label);
   el.textContent = glyph;
+  return el;
+}
+
+function line(className: string): HTMLElement {
+  const el = document.createElement("div");
+  el.className = className;
   return el;
 }
 
@@ -75,20 +120,59 @@ function build(): Lightbox {
   const prev = button("photo-lightbox-nav photo-lightbox-prev", "Previous photo", "‹");
   const next = button("photo-lightbox-nav photo-lightbox-next", "Next photo", "›");
 
+  const info: Info = {
+    button: button("photo-lightbox-info-btn", "Camera details", "i"),
+    root: line("photo-lightbox-info"),
+    camera: line("photo-lightbox-info-camera"),
+    lens: line("photo-lightbox-info-lens"),
+    settings: line("photo-lightbox-info-settings"),
+  };
+  info.button.title = "Camera details (i)";
+  info.root.append(info.camera, info.lens, info.settings);
+
   const counter = document.createElement("div");
   counter.className = "photo-lightbox-counter";
 
-  root.append(stage, close, prev, next, counter);
+  // The caption and the details share one bottom-centred column, so revealing
+  // the details grows it upwards and the counter stays where it was.
+  const meta = document.createElement("div");
+  meta.className = "photo-lightbox-meta";
+  meta.append(info.root, counter);
+
+  root.append(stage, close, info.button, prev, next, meta);
   document.body.appendChild(root);
 
-  const box: Lightbox = { root, stage, img, counter, prev, next };
+  const box: Lightbox = { root, stage, img, counter, prev, next, info };
 
   close.addEventListener("click", closeLightbox);
   prev.addEventListener("click", () => show(index - 1));
   next.addEventListener("click", () => show(index + 1));
+  info.button.addEventListener("click", toggleInfo);
+
+  // Anywhere in the viewer, not just the stage, so a pointer resting over a
+  // button still counts as being there.
+  for (const event of ["pointermove", "pointerdown", "wheel"] as const) {
+    root.addEventListener(event, wakeControls, { passive: true });
+  }
 
   attachZoom(box);
   return box;
+}
+
+/** Reflects `infoOpen` onto the panel and its button. */
+function applyInfo(): void {
+  if (!ui) return;
+  const slide = slides[index];
+  const has = Boolean(slide && (slide.camera || slide.lens || slide.settings));
+  ui.info.button.classList.toggle("photo-hidden", !has);
+  ui.info.button.classList.toggle("photo-lightbox-info-btn-on", has && infoOpen);
+  ui.info.button.setAttribute("aria-pressed", String(has && infoOpen));
+  ui.info.root.classList.toggle("photo-hidden", !(has && infoOpen));
+}
+
+function toggleInfo(): void {
+  infoOpen = !infoOpen;
+  applyInfo();
 }
 
 function applyTransform(): void {
@@ -256,13 +340,26 @@ function show(next: number): void {
   ui.prev.classList.toggle("photo-hidden", single);
   ui.next.classList.toggle("photo-hidden", single);
 
+  // Each line collapses on its own: a phone photo has settings but no lens.
+  for (const [el, text] of [
+    [ui.info.camera, slide.camera],
+    [ui.info.lens, slide.lens],
+    [ui.info.settings, slide.settings],
+  ] as const) {
+    el.textContent = text;
+    el.classList.toggle("photo-hidden", !text);
+  }
+  applyInfo();
+
   resetTransform();
+  wakeControls();
   preload(index + 1);
   preload(index - 1);
 }
 
 function onKeyDown(e: KeyboardEvent): void {
   if (!ui || ui.root.classList.contains("photo-lightbox-closed")) return;
+  wakeControls();
   switch (e.key) {
     case "Escape":
       closeLightbox();
@@ -282,6 +379,10 @@ function onKeyDown(e: KeyboardEvent): void {
       break;
     case "0":
       resetTransform();
+      break;
+    case "i":
+    case "I":
+      toggleInfo();
       break;
     default:
       return;
@@ -310,6 +411,9 @@ function collectSlides(): Slide[] {
         album: name,
         positionInAlbum: i + 1,
         albumSize: items.length,
+        camera: el.dataset.exifCamera ?? "",
+        lens: el.dataset.exifLens ?? "",
+        settings: el.dataset.exifSettings ?? "",
       });
     });
   }
@@ -327,7 +431,9 @@ function openLightbox(start: number): void {
 
 export function closeLightbox(): void {
   if (!ui) return;
+  clearTimeout(idleTimer);
   ui.root.classList.add("photo-lightbox-closed");
+  ui.root.classList.remove("photo-lightbox-idle");
   document.documentElement.classList.remove("photo-lightbox-open");
   // Dropping the source stops a large in-flight rendition from downloading
   // after the viewer is gone.
