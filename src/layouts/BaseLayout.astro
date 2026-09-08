@@ -103,14 +103,14 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
         </a>
         <div class="nav-links flex gap-0 sm:gap-1 items-center flex-wrap justify-center sm:justify-start">
           {/*
-            No CTF or Leaderboard tab. The writeups are reachable as a single
-            entry in the blog listing, and the leaderboard belongs to the yarn
+            No Blog, CTF or Leaderboard tab. The home page *is* the blog listing,
+            so the logo already leads there; the writeups are reachable as a
+            single entry in that listing, and the leaderboard belongs to the yarn
             easter-egg rather than to the site's contents — it is linked from the
             game-over overlay, the footer and the About page. `extra` lists the
-            paths a tab should also light up for, so /ctf still shows as Blog.
+            extra paths a tab should light up for.
           */}
           {[
-            { href: "/blog", label: "Blog", extra: ["/", "/ctf"] },
             { href: "/projects", label: "Projects", extra: [] },
             { href: "/games", label: "Games", extra: [] },
             { href: "/photography", label: "Photography", extra: [] },

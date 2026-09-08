@@ -17,6 +17,11 @@ export default defineConfig({
   site: 'https://brutenis.net',
   integrations: [sitemap({ filter: (page) => !page.includes('/admin') })],
 
+  // Astro's dev toolbar sits bottom-centre, which on a phone is exactly where
+  // the lightbox caption and the game HUD are — it covers what it is meant to
+  // help inspect. Dev-only either way, so nothing about the built site changes.
+  devToolbar: { enabled: false },
+
   // Astro emits a <meta http-equiv="content-security-policy"> per page, with
   // SHA-256 hashes for its own inline and bundled scripts and styles. That
   // gives a script-src with no 'unsafe-inline', which is the point: the admin
