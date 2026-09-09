@@ -50,8 +50,22 @@
     const CORAL = "#ff6b6b";
     const TEAL = "#4ecdc4";
     const PURPLE = "#a06cd5";
-    const CHARCOAL = "#2d3436";
-    const MUTED = "#636e72";
+    // Unlike the palette colours above, these two are the page's ink rather
+    // than yarn, so they have to follow the theme — hard-coded charcoal draws
+    // the nodes and labels invisibly once the background goes dark. Re-read
+    // only when the theme actually flips; getComputedStyle on every frame of
+    // the loop would be wasted work.
+    let CHARCOAL = "#2d3436";
+    let MUTED = "#636e72";
+    let themedForDark: boolean | null = null;
+    function refreshThemeColors() {
+      const dark = document.documentElement.classList.contains("dark");
+      if (dark === themedForDark) return;
+      themedForDark = dark;
+      const css = getComputedStyle(document.documentElement);
+      CHARCOAL = css.getPropertyValue("--color-text-charcoal").trim() || CHARCOAL;
+      MUTED = css.getPropertyValue("--color-text-muted").trim() || MUTED;
+    }
     const BLUE = "#74b9ff";
 
     // ── Config ──
@@ -378,6 +392,7 @@
     }
 
     function draw() {
+      refreshThemeColors();
       ctx.clearRect(0, 0, w, h);
 
       const solving = state === "SOLVE_B" || state === "SOLVE_A";

@@ -9,8 +9,16 @@
 @import "@fontsource/jetbrains-mono/latin-500.css";
 @import "@fontsource/jetbrains-mono/latin-700.css";
 
+/* Dark mode is driven by a `dark` class on <html>, not by prefers-color-scheme
+   alone: the toggle in the nav has to be able to override the OS. The bootstrap
+   that puts the class there before first paint is injected as a head-inline
+   script from astro.config.mjs — see the comment there for why it cannot be an
+   `is:inline` script in the layout. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
-  /* Yarn color palette */
+  /* Yarn color palette. Unchanged between themes — these are saturated mid
+     tones that carry on both the paper and the ink background. */
   --color-yarn-coral: #ff6b6b;
   --color-yarn-teal: #4ecdc4;
   --color-yarn-yellow: #ffe66d;
@@ -20,18 +28,77 @@
   --color-yarn-green: #55efc4;
   --color-yarn-orange: #fdcb6e;
 
-  /* Base palette */
-  --color-bg-cream: #fef9ef;
-  --color-bg-warm: #fff5e6;
+  /* Base palette. Every value here is re-declared under `html.dark` below, so
+     the names read as roles ("the page", "the raised tint") rather than as the
+     literal colours they started as. Anything that should flip with the theme
+     belongs here; anything hard-coded in a component's <style> will not. */
+  --color-bg-cream: #f3efe6;      /* the page itself */
+  /* Raised tint: nav hover, table headers. Pulled back from the old #fff5e6,
+     which was a near-white against the old cream but reads as a yellow patch
+     now that the page itself is a warm grey. */
+  --color-bg-warm: #faf5e9;
+  --color-surface: #fdfbf6;       /* cards and panels sitting on the page */
+  --color-border-soft: #e0dacd;   /* hairlines: table cells, code chips */
+  --color-code-bg: #efe9dc;
   --color-text-charcoal: #2d3436;
   --color-text-muted: #636e72;
   --color-accent: #ff6b6b;
   --color-accent-hover: #ee5a5a;
 
+  /* Deliberately *not* theme-dependent: text and hairlines that always sit on a
+     dark surface (the photo lightbox, a filled coral button) and so must stay
+     light in both themes. Using --color-bg-cream here would make them vanish in
+     dark mode. */
+  --color-paper-light: #fef9ef;
+
   /* Fonts */
   --font-heading: "Kalam", cursive;
   --font-body: "Patrick Hand", cursive;
   --font-mono: "JetBrains Mono", monospace;
+}
+
+/* Not in @theme: these are composite values (gradients, shadows, alpha
+   overlays) rather than colours, so they would only pollute the utility
+   namespace. They still flip with the theme. */
+:root {
+  color-scheme: light;
+  /* The two faint washes bled into the paper. */
+  --paper-wash-1: rgb(210 95 80 / 0.025);
+  --paper-wash-2: rgb(40 130 125 / 0.02);
+  /* Panels that let the paper show through (leaderboard table). */
+  --surface-translucent: rgb(255 255 255 / 0.6);
+  /* The floating game HUD: nearly opaque, since it has to stay readable over
+     whatever it happens to be covering, but blurred behind. */
+  --surface-frosted: rgb(255 255 255 / 0.95);
+  --shadow-card: 0 4px 12px rgb(0 0 0 / 0.08);
+  --shadow-panel: 0 4px 20px rgb(0 0 0 / 0.05);
+  /* Zebra/hover tints that have to stay legible against the surface. */
+  --tint-hairline: rgb(0 0 0 / 0.05);
+}
+
+html.dark {
+  color-scheme: dark;
+  /* Dark card stock rather than pure black: the same warm hue family as the
+     paper, dropped to ink levels, so the yarn palette still reads as drawn on
+     something rather than glowing in a void. */
+  --color-bg-cream: #1a1917;
+  --color-bg-warm: #2a2723;
+  --color-surface: #221f1d;
+  --color-border-soft: #3a352e;
+  --color-code-bg: #282420;
+  --color-text-charcoal: #ece6da;
+  --color-text-muted: #a09889;
+  --color-accent: #ff8080;
+  --color-accent-hover: #ffa3a3;
+
+  /* Stronger washes: at 2.5% they are invisible against ink. */
+  --paper-wash-1: rgb(255 120 100 / 0.06);
+  --paper-wash-2: rgb(80 200 190 / 0.045);
+  --surface-translucent: rgb(255 255 255 / 0.04);
+  --surface-frosted: rgb(38 35 32 / 0.95);
+  --shadow-card: 0 4px 12px rgb(0 0 0 / 0.5);
+  --shadow-panel: 0 4px 20px rgb(0 0 0 / 0.35);
+  --tint-hairline: rgb(255 255 255 / 0.07);
 }
 
 @layer base {
@@ -51,6 +118,13 @@
     font-family: var(--font-body);
     color: var(--color-text-charcoal);
     min-height: 100vh;
+    /* Paper: a flat warm sheet with two very faint colour washes bled into it,
+       so the page reads as stock rather than as a screen white (or, in dark
+       mode, as ink rather than as an unlit panel). */
+    background:
+      radial-gradient(circle at 20% 10%, var(--paper-wash-1), transparent 35rem),
+      radial-gradient(circle at 85% 65%, var(--paper-wash-2), transparent 40rem),
+      var(--color-bg-cream);
     /* The nav is position:fixed and reserves no space of its own.
        @scripts/fixed-nav overwrites this with the measured height as an inline
        style; these are the fallback for before it runs and for no-JS, and are
@@ -137,11 +211,11 @@
   }
 
   .prose code:not(pre code) {
-    background: #f0e6d6;
+    background: var(--color-code-bg);
     padding: 0.15em 0.4em;
     border-radius: 0.375rem;
     font-size: 0.9em;
-    border: 1px solid #e0d4c0;
+    border: 1px solid var(--color-border-soft);
   }
 
   .prose ul {
@@ -186,7 +260,7 @@
   }
 
   .prose th, .prose td {
-    border: 1px solid #dfe6e9;
+    border: 1px solid var(--color-border-soft);
     padding: 0.5rem 0.75rem;
     text-align: left;
   }

@@ -13,9 +13,56 @@ const gameVersion = (() => {
   }
 })();
 
+// Applies the saved (or OS-preferred) theme to <html> before the first paint.
+//
+// This has to be an injected 'head-inline' script rather than an `is:inline`
+// <script> in BaseLayout, because of the CSP below: Astro hashes the scripts it
+// knows about — bundled chunks, client directives, and injectScript's
+// 'head-inline'/'before-hydration' stages — but it does not scan rendered HTML
+// for inline <script> elements, so an `is:inline` one gets no hash and the
+// browser refuses to run it. The visible symptom would be a flash of the light
+// theme on every load for dark-mode users.
+//
+// It also re-applies on `astro:after-swap`: the client router copies the
+// incoming document's <html> attributes over the live ones, which drops the
+// `dark` class on every client-side navigation.
+const themeBootstrap = `
+(() => {
+  const apply = () => {
+    let dark = false;
+    try {
+      const saved = localStorage.getItem('theme');
+      dark = saved ? saved === 'dark'
+                   : matchMedia('(prefers-color-scheme: dark)').matches;
+    } catch {}
+    document.documentElement.classList.toggle('dark', dark);
+  };
+  apply();
+  if (!window.__themeHooked) {
+    window.__themeHooked = true;
+    document.addEventListener('astro:after-swap', apply);
+    // Follow the OS while the visitor has not picked a side themselves.
+    matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+      try { if (localStorage.getItem('theme')) return; } catch {}
+      apply();
+    });
+  }
+})();
+`;
+
 export default defineConfig({
   site: 'https://brutenis.net',
-  integrations: [sitemap({ filter: (page) => !page.includes('/admin') })],
+  integrations: [
+    sitemap({ filter: (page) => !page.includes('/admin') }),
+    {
+      name: 'theme-bootstrap',
+      hooks: {
+        'astro:config:setup': ({ injectScript }) => {
+          injectScript('head-inline', themeBootstrap);
+        },
+      },
+    },
+  ],
 
   // Astro's dev toolbar sits bottom-centre, which on a phone is exactly where
   // the lightbox caption and the game HUD are — it covers what it is meant to

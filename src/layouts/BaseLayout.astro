@@ -39,6 +39,36 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     <!-- Cursor canvas (above content) -->
     <canvas id="yarn-cursor-canvas" class="yarn-canvas yarn-canvas-cursor" transition:persist="yarn-cursor-canvas"></canvas>
     <!--
+      Theme toggle, pinned to the top-left corner as the mirror of the game HUD
+      on the right. A direct child of <body> rather than a nav item for the same
+      reason the HUD is: it is position:fixed, so inside the nav it would be
+      positioned against the viewport anyway while still taking part in the
+      row's layout and pushing the logo around.
+
+      Not transition:persist — it holds no script state. The click handler is
+      delegated off document (see @scripts/theme-toggle) so it survives the body
+      being swapped, and the sun/moon state is pure CSS off html.dark.
+    -->
+    <button
+      id="theme-toggle"
+      type="button"
+      class="theme-toggle"
+      aria-label="Switch colour theme"
+      aria-pressed="false"
+      title="Toggle dark mode"
+    >
+      <svg class="theme-icon theme-icon-sun" viewBox="0 0 24 24" aria-hidden="true">
+        <circle cx="12" cy="12" r="4.4" />
+        <g stroke-linecap="round">
+          <path d="M12 2.6v2.4M12 19v2.4M2.6 12h2.4M19 12h2.4" />
+          <path d="M5.4 5.4 7.1 7.1M16.9 16.9l1.7 1.7M18.6 5.4 16.9 7.1M7.1 16.9l-1.7 1.7" />
+        </g>
+      </svg>
+      <svg class="theme-icon theme-icon-moon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M20 14.2A8.4 8.4 0 0 1 9.8 4a8.4 8.4 0 1 0 10.2 10.2z" />
+      </svg>
+    </button>
+    <!--
       Game HUD + attackers toggle. It stays a direct child of <body>: it is
       transition:persist, and a persisted element inside <nav> would be moved
       into each incoming nav on every client-side navigation, which restarts its
@@ -143,6 +173,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
       import "@scripts/yarn-game/index";
       import "@scripts/animated-logo";
       import "@scripts/clickable-cards";
+      import "@scripts/theme-toggle";
       import { initFixedNav, teardownFixedNav } from "@scripts/fixed-nav";
 
       initFixedNav();
@@ -179,6 +210,106 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
   .nav-link-active {
     color: var(--color-yarn-coral);
     background-color: var(--color-bg-warm);
+  }
+
+  /* Pinned to the top-left corner, tracking .game-hud-collapsed's offsets and
+     size on the right at each breakpoint so the two corners read as a pair.
+     Frosted like the HUD rather than transparent: it floats over the page
+     content once the nav scrolls away, so it needs its own backdrop.
+
+     Sun in light mode, moon in dark — the current state, not the target one,
+     matching the aria-pressed the script keeps in sync. Both icons are stacked
+     in the same grid cell so the button never changes size as they swap. */
+  .theme-toggle {
+    position: fixed;
+    top: 0.5rem;
+    left: 0.5rem;
+    /* Same layer as the game HUD: above the nav (50) and above both canvases
+       (60/61), or the yarn ball would be drawn over the button. */
+    z-index: 100;
+    display: grid;
+    place-items: center;
+    width: 2.5rem;
+    height: 2.5rem;
+    padding: 0;
+    border: 2px dashed var(--color-yarn-teal);
+    border-radius: 50%;
+    background: var(--surface-frosted);
+    backdrop-filter: blur(4px);
+    color: var(--color-yarn-teal);
+    cursor: pointer;
+    box-shadow: 0 1px 6px rgba(78, 205, 196, 0.25);
+    transition: transform 0.3s ease, color 0.2s, border-color 0.2s,
+                background-color 0.2s;
+  }
+  .theme-toggle:hover {
+    border-style: solid;
+    color: var(--color-yarn-coral);
+    border-color: var(--color-yarn-coral);
+  }
+
+  /* From here up the nav is a row with the logo at its left edge, so the button
+     is no longer floating in empty space beside a centred logo — the logo has
+     to be pushed clear of it. The button spans from ~0.55rem to ~3.55rem off
+     the left edge; the logo starts one px-4 inside the centred 64rem column, so
+     it only needs pushing once that gutter is too thin to hold the button
+     beside it. Wide windows get 0 and the logo does not move from where it has
+     always been. Mirror of the .nav-links reserve for the game HUD below. */
+  @media (min-width: 640px) {
+    .theme-toggle {
+      top: 0.55rem;
+      left: 0.55rem;
+      width: 3rem;
+      height: 3rem;
+    }
+
+    .logo-link {
+      margin-left: max(0px, calc(3.2rem - max(0px, (100vw - 64rem) / 2)));
+    }
+  }
+
+  /* Desktop: sized and aligned to the HUD pill's row, and it leaves with the
+     nav on scroll for the same reason the pill does — otherwise it is left
+     floating over the content on its own. */
+  @media (hover: hover) and (pointer: fine) {
+    .theme-toggle {
+      top: 0.9rem;
+      left: 1rem;
+      width: 2.55rem;
+      height: 2.55rem;
+    }
+
+    html.nav-collapsed .theme-toggle {
+      transform: translateY(-150%);
+    }
+  }
+
+  .theme-icon {
+    grid-area: 1 / 1;
+    width: 1.15rem;
+    height: 1.15rem;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 1.9;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  .theme-icon-moon {
+    opacity: 0;
+    transform: rotate(-60deg) scale(0.6);
+  }
+  html.dark .theme-icon-sun {
+    opacity: 0;
+    transform: rotate(60deg) scale(0.6);
+  }
+  html.dark .theme-icon-moon {
+    opacity: 1;
+    transform: none;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .theme-icon {
+      transition: none;
+    }
   }
 
   .yarn-canvas {
@@ -260,7 +391,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     right: 50%;
     transform: translateX(50%);
     z-index: 100;
-    background: rgba(255, 255, 255, 0.95);
+    background: var(--surface-frosted);
     backdrop-filter: blur(4px);
     padding: 0.5rem 1.2rem;
     border-radius: 2rem;
@@ -384,9 +515,12 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
 
      This threshold tracked the nav's width as tabs were added — out to 1250px
      for "Photos" and 1500px for "Photography" — but dropping the CTF and
-     Leaderboard tabs freed more than those cost, so it is back to its original
-     value and the hint is visible again between 1150px and 1500px. */
-  @media (hover: hover) and (pointer: fine) and (max-width: 1150px) {
+     Leaderboard tabs freed more than those cost, so it went back to its
+     original 1150px. The theme toggle then took the mirror-image reserve out of
+     the left side: below the 64rem column width (~1229px at the 120% root size)
+     the logo is pushed a full 3.2rem right, which costs the row ~61px, hence
+     1200. */
+  @media (hover: hover) and (pointer: fine) and (max-width: 1200px) {
     .game-hud .hud-label,
     .game-hud .hud-separator {
       display: none !important;
@@ -469,7 +603,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     padding: 0.5rem 1rem;
     border: 2px dashed var(--color-yarn-teal);
     border-radius: 0.75rem;
-    background: white;
+    background: var(--color-surface);
     color: var(--color-text-charcoal);
     width: 100%;
     max-width: 240px;

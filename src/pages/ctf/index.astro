@@ -59,13 +59,13 @@ const sortedEvents = [...grouped.entries()].sort((a, b) => {
     border: 2px dashed var(--color-yarn-blue);
     border-radius: 0.75rem;
     transition: all 0.2s;
-    background: white;
+    background: var(--color-surface);
     text-decoration: none;
   }
   .ctf-card:hover {
     border-style: solid;
     transform: translateY(-2px);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: var(--shadow-card);
   }
   .ctf-tag {
     display: inline-block;
