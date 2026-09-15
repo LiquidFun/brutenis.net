@@ -25,6 +25,23 @@ const SHIELDED_FIRST_LEVEL = 7;
 const SHIELDED_SCORE = 5;
 const SHIELDED_SHIELD_COLOR = "#7f8c8d";
 const SHIELDED_SHIELD_GLOW = "#ecf0f1";
+// The plates face the card the monster is chewing, so the gap sits away from it
+// and getting around behind is the line the player has to find. That falls apart
+// when the gap ends up outside the viewport: the yarn ball is clamped to the
+// screen, so an unreachable gap is an unkillable monster. On a phone this is the
+// common case, not the corner case — cards run nearly the full width, so any
+// monster that picked a point on a card's left or right edge parks its back over
+// the bezel. The facing is therefore allowed to swing away from the card, by as
+// little as it takes to bring the gap back within reach.
+/** Where the ball has to sit to land in the gap, as a fraction of hitRadius. */
+const SHIELD_GAP_PROBE = 0.5;
+/** The gap must clear the viewport edge by this much. The ball's own centre stops
+ *  ~14px short of it, so this is reach plus room to actually steer in. */
+const SHIELD_GAP_MARGIN = 30;
+/** Granularity of the search for the smallest workable rotation. */
+const SHIELD_TURN_STEP = Math.PI / 16;
+/** How fast the plates swing to a new facing, rad/s — visible, not instant. */
+const SHIELD_TURN_RATE = 5;
 
 const SNARL_FIRST_LEVEL = 11;
 const SNARL_MAX_ALIVE = 2; // from level 12 on; level 11 raises it to teach
@@ -349,6 +366,8 @@ interface Monster {
   isShielded: boolean;
   shieldSegments: number;
   shieldFlash: number[];
+  /** Absolute angle segment 0 points at — see shieldFacing(). */
+  shieldAngle: number;
   isBoss: boolean;
   bossOpenSegment: number;
   bossInvulnTimer: number;
@@ -448,6 +467,9 @@ function createMonster(
     kind, scoreValue: 1,
     isShooter: kind === "shooter", orbitAngle: 0, shootCooldown: 0,
     isShielded: kind === "shielded", shieldSegments: 0, shieldFlash: new Array(8).fill(0),
+    // Starts at its natural facing so the ring is never briefly open in the
+    // wrong direction on the way in — see shieldFacing().
+    shieldAngle: target && kind !== "boss" ? Math.atan2(target.y - y, target.x - x) : 0,
     isBoss: kind === "boss" || kind === "queen",
     bossOpenSegment: 0, bossInvulnTimer: 0, bossAttackTimer: 0,
     bossPhase2Cycle: 0, bossBurstsFired: 0,
@@ -553,6 +575,71 @@ function pointOnPerimeter(rect: DOMRect, t: number): { x: number; y: number } {
   if (d < rect.width) return { x: rect.right - d, y: rect.bottom };
   d -= rect.width;
   return { x: rect.left, y: rect.top + rect.height - d };
+}
+
+/**
+ * Which segments of a monster's shield ring are plated. Segment 0 points at
+ * `shieldAngle` and the rest follow clockwise in 45° steps, for both kinds of
+ * shield: the boss keeps a single opening it re-rolls on every hit, a shielded
+ * moth plates a run symmetric about segment 0 so its gap faces its own back.
+ */
+function isPlatedSegment(m: Monster, segIdx: number): boolean {
+  if (m.kind === "boss") return segIdx !== m.bossOpenSegment;
+  const half = Math.floor(m.shieldSegments / 2);
+  return segIdx <= half || segIdx >= 8 - half;
+}
+
+/** Which segment of m's ring a hit from (x, y) lands on. */
+function shieldSegmentAt(m: Monster, x: number, y: number): number {
+  const rel = Math.atan2(y - m.y, x - m.x) - m.shieldAngle;
+  const norm = ((rel % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  return Math.floor((norm + Math.PI / 8) / (Math.PI / 4)) % 8;
+}
+
+/** True if the ball can get to at least one of the open segments on this facing. */
+function shieldGapReachable(m: Monster, facing: number): boolean {
+  const reach = m.hitRadius * SHIELD_GAP_PROBE;
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  for (let i = 0; i < 8; i++) {
+    if (isPlatedSegment(m, i)) continue;
+    const a = facing + i * (Math.PI / 4);
+    const gx = m.x + Math.cos(a) * reach;
+    const gy = m.y + Math.sin(a) * reach;
+    if (
+      gx >= SHIELD_GAP_MARGIN && gx <= vw - SHIELD_GAP_MARGIN &&
+      gy >= SHIELD_GAP_MARGIN && gy <= vh - SHIELD_GAP_MARGIN
+    ) return true;
+  }
+  return false;
+}
+
+/**
+ * The facing a shielded monster wants: its natural one — plates toward the card
+ * it is chewing, or unrotated for the boss, whose opening moves on its own —
+ * turned off it by the smallest amount that keeps the gap on screen.
+ *
+ * Returns the natural angle unchanged when no rotation helps: that means the
+ * monster itself is off-screen, still on its way in, and there is nothing to keep
+ * reachable yet.
+ */
+function shieldFacing(m: Monster): number {
+  const natural = m.kind === "boss" || !m.targetEl
+    ? 0 : Math.atan2(m.targetY - m.y, m.targetX - m.x);
+  if (shieldGapReachable(m, natural)) return natural;
+  const steps = Math.ceil(Math.PI / SHIELD_TURN_STEP);
+  for (let i = 1; i <= steps; i++) {
+    const off = i * SHIELD_TURN_STEP;
+    if (shieldGapReachable(m, natural + off)) return natural + off;
+    if (shieldGapReachable(m, natural - off)) return natural - off;
+  }
+  return natural;
+}
+
+/** Rotate `from` toward `to` by at most `maxStep`, the short way round. */
+function turnToward(from: number, to: number, maxStep: number): number {
+  const d = Math.atan2(Math.sin(to - from), Math.cos(to - from));
+  return Math.abs(d) <= maxStep ? to : from + Math.sign(d) * maxStep;
 }
 
 // ── Scroll tracking ──
@@ -952,10 +1039,8 @@ export class MonsterManager {
 
         // Boss shield check: 7/8 segments active, 1 open
         if (m.kind === "boss") {
-          const hitAngle = Math.atan2(ballY - m.y, ballX - m.x);
-          let norm = ((hitAngle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-          const segIdx = Math.floor((norm + Math.PI / 8) / (Math.PI / 4)) % 8;
-          if (segIdx !== m.bossOpenSegment) {
+          const segIdx = shieldSegmentAt(m, ballX, ballY);
+          if (isPlatedSegment(m, segIdx)) {
             // Hit shielded segment — bounce off
             m.shieldFlash[segIdx] = 0.3;
             m.vx = nx * 60;
@@ -970,15 +1055,8 @@ export class MonsterManager {
 
         // Shield check for shielded enemies
         if (m.isShielded && m.shieldSegments > 0) {
-          const frontAngle = m.targetEl
-            ? Math.atan2(m.targetY - m.y, m.targetX - m.x) : 0;
-          const hitAngle = Math.atan2(ballY - m.y, ballX - m.x);
-          let rel = hitAngle - frontAngle;
-          rel = ((rel % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
-          const segIdx = Math.floor((rel + Math.PI / 8) / (Math.PI / 4)) % 8;
-          const half = Math.floor(m.shieldSegments / 2);
-          const shielded = segIdx <= half || segIdx >= 8 - half;
-          if (shielded) {
+          const segIdx = shieldSegmentAt(m, ballX, ballY);
+          if (isPlatedSegment(m, segIdx)) {
             // Bounce off shield — glow + push ball away + brief invulnerability
             m.shieldFlash[segIdx] = 0.3;
             m.flashTimer = 0.15;
@@ -1606,6 +1684,9 @@ export class MonsterManager {
       m.wingPhase += dt * (m.isBoss ? 5 : m.isShooter ? 3 : m.isBig ? 10 : 14);
       if (m.flashTimer > 0) m.flashTimer -= dt;
       if (m.isShielded || m.isBoss) for (let i = 0; i < 8; i++) if (m.shieldFlash[i] > 0) m.shieldFlash[i] -= dt;
+      if (m.kind === "boss" || (m.isShielded && m.shieldSegments > 0)) {
+        m.shieldAngle = turnToward(m.shieldAngle, shieldFacing(m), SHIELD_TURN_RATE * dt);
+      }
 
       if (m.isQueen) this.tickQueenBlink(m, dt);
 
@@ -2345,8 +2426,8 @@ export class MonsterManager {
         // ── Boss shield: 7/8 segments, 1 open ──
         const shieldR = s * 1.6;
         for (let i = 0; i < 8; i++) {
-          if (i === m.bossOpenSegment) continue; // the opening
-          const segAngle = i * (Math.PI / 4);
+          if (!isPlatedSegment(m, i)) continue; // the opening
+          const segAngle = m.shieldAngle + i * (Math.PI / 4);
           const flash = m.shieldFlash[i] > 0;
           ctx.fillStyle = flash ? BOSS_SHIELD_GLOW : BOSS_SHIELD_COLOR;
           ctx.globalAlpha = flash ? 0.95 : (m.bossInvulnTimer > 0 ? 0.9 : 0.65);
@@ -2410,15 +2491,11 @@ export class MonsterManager {
         ctx.globalAlpha = 1;
 
         // ── Shield segments ──
-        const frontAngle = m.targetEl
-          ? Math.atan2(m.targetY - m.y, m.targetX - m.x) : 0;
-        const half = Math.floor(m.shieldSegments / 2);
         const shieldR = s * 1.4;
 
         for (let i = 0; i < 8; i++) {
-          const isActive = i <= half || i >= 8 - half;
-          if (!isActive) continue;
-          const segAngle = frontAngle + i * (Math.PI / 4);
+          if (!isPlatedSegment(m, i)) continue;
+          const segAngle = m.shieldAngle + i * (Math.PI / 4);
           const flash = m.shieldFlash[i] > 0;
           ctx.fillStyle = flash ? SHIELDED_SHIELD_GLOW : SHIELDED_SHIELD_COLOR;
           ctx.globalAlpha = flash ? 0.95 : 0.7;

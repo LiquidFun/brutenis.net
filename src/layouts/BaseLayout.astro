@@ -156,6 +156,10 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
       <slot />
     </main>
 
+    <button class="to-top" type="button" aria-label="Back to top" title="Back to top">
+      &#8593;
+    </button>
+
     <footer class="border-t-2 border-dashed border-yarn-teal/30 mt-auto">
       <div class="max-w-5xl mx-auto px-4 py-6 text-center text-text-muted text-sm">
         <p class="font-heading text-lg">&copy; {new Date().getFullYear()} brutenis.net</p>
@@ -174,6 +178,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
       import "@scripts/animated-logo";
       import "@scripts/clickable-cards";
       import "@scripts/theme-toggle";
+      import "@scripts/to-top";
       import { initFixedNav, teardownFixedNav } from "@scripts/fixed-nav";
 
       initFixedNav();
@@ -310,6 +315,64 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
     .theme-icon {
       transition: none;
     }
+  }
+
+  /* --- back to top ------------------------------------------------------- */
+
+  /* Bottom right: the game HUD is bottom-centre on touch devices and pinned to
+     the nav bar on desktop, so this corner is free in both. Below the photo
+     lightbox (z-index 10000) and the HUD (100), above the yarn canvases
+     (60/61).
+
+     Coral filled, not a pale outlined circle: on /photography the corner of the
+     page is a full-bleed photo, and an outline disappeared against a bright
+     one. Filled, it reads as a button from across the screen, and it matches
+     the site's other primary actions. */
+  .to-top {
+    position: fixed;
+    right: 1rem;
+    bottom: 1.25rem;
+    z-index: 90;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 3rem;
+    height: 3rem;
+    padding: 0;
+    border-radius: 50%;
+    border: 2px dashed rgba(254, 249, 239, 0.6);
+    background: var(--color-yarn-coral);
+    color: var(--color-paper-light);
+    font-family: var(--font-heading);
+    font-size: 1.7rem;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow:
+      0 2px 12px rgba(255, 107, 107, 0.45),
+      0 2px 6px rgba(0, 0, 0, 0.2);
+    /* Hidden until scrolled down. visibility, not display: the two states are
+       animated, and it must not take clicks while invisible. */
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(0.5rem);
+    transition:
+      opacity 0.2s ease,
+      transform 0.2s ease,
+      visibility 0.2s,
+      background 0.2s ease,
+      color 0.2s ease;
+  }
+
+  .to-top-visible {
+    opacity: 1;
+    visibility: visible;
+    transform: none;
+  }
+
+  .to-top:hover {
+    background: var(--color-accent-hover);
+    border-color: var(--color-paper-light);
+    transform: translateY(-2px);
   }
 
   .yarn-canvas {

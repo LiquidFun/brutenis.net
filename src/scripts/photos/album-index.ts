@@ -1,5 +1,5 @@
 /**
- * The album index strip at the top of /photography, plus the back-to-top button.
+ * The album index strip at the top of /photography.
  *
  * The index entries are plain `<a href="#slug">` links, so the browser does the
  * scrolling and the history entry: the URL becomes shareable for free, the links
@@ -11,9 +11,6 @@
  * position — from a fragment or from a reload — that was resolved before the
  * justified layout ran, and a repeat click on a fragment already in the URL.
  */
-
-/** How far down the page the back-to-top button appears, in pixels. */
-const SHOW_TO_TOP_AFTER = 600;
 
 let cleanups: (() => void)[] = [];
 
@@ -72,43 +69,9 @@ function initIndexLinks(): void {
   }
 }
 
-function initToTop(): void {
-  const button = document.querySelector<HTMLButtonElement>(".photo-to-top");
-  if (!button) return;
-
-  let frame = 0;
-  const update = () => {
-    frame = 0;
-    button.classList.toggle("photo-to-top-visible", window.scrollY > SHOW_TO_TOP_AFTER);
-  };
-  const onScroll = () => {
-    if (!frame) frame = requestAnimationFrame(update);
-  };
-  update();
-  window.addEventListener("scroll", onScroll, { passive: true });
-
-  const onClick = () => {
-    // Drop the album fragment on the way up. It would otherwise make a link
-    // copied from the top of the page point at whichever album was last
-    // visited, and it would swallow the next click on that album's card.
-    if (location.hash) history.replaceState(history.state, "", location.pathname + location.search);
-    // Default behaviour, which follows `scroll-behavior: smooth` from
-    // global.css, rather than forcing smooth here.
-    window.scrollTo({ top: 0 });
-  };
-  button.addEventListener("click", onClick);
-
-  cleanups.push(() => {
-    if (frame) cancelAnimationFrame(frame);
-    window.removeEventListener("scroll", onScroll);
-    button.removeEventListener("click", onClick);
-  });
-}
-
 export function initAlbumIndex(): void {
   teardownAlbumIndex();
   initIndexLinks();
-  initToTop();
 }
 
 /**

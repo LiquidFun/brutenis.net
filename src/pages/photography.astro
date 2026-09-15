@@ -119,9 +119,6 @@ const EAGER_COVERS = 6;
     ))
   }
 
-  <button class="photo-to-top" type="button" aria-label="Back to top" title="Back to top">
-    &#8593;
-  </button>
 </BaseLayout>
 
 <script>
@@ -219,62 +216,6 @@ const EAGER_COVERS = 6;
   .album-index-card:hover .album-index-title,
   .album-index-card:focus-visible .album-index-title {
     color: var(--color-yarn-coral);
-  }
-
-  /* --- back to top ------------------------------------------------------ */
-
-  /* Bottom right: the game HUD is bottom-centre on touch devices and pinned to
-     the nav bar on desktop, so this corner is free in both. Below the lightbox
-     (z-index 10000) and the HUD (100), above the yarn canvases (60/61). */
-  /* Coral on cream, not the reverse: a pale circle with a thin outline
-     disappeared against a bright photo, which is what the corner of this page is
-     made of. Filled, it reads as a button from across the screen — and it
-     matches the site's other primary actions. */
-  .photo-to-top {
-    position: fixed;
-    right: 1rem;
-    bottom: 1.25rem;
-    z-index: 90;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 3rem;
-    height: 3rem;
-    padding: 0;
-    border-radius: 50%;
-    border: 2px dashed rgba(254, 249, 239, 0.6);
-    background: var(--color-yarn-coral);
-    color: var(--color-paper-light);
-    font-family: var(--font-heading);
-    font-size: 1.7rem;
-    line-height: 1;
-    cursor: pointer;
-    box-shadow:
-      0 2px 12px rgba(255, 107, 107, 0.45),
-      0 2px 6px rgba(0, 0, 0, 0.2);
-    /* Hidden until scrolled down. visibility, not display: the two states are
-       animated, and it must not take clicks while invisible. */
-    opacity: 0;
-    visibility: hidden;
-    transform: translateY(0.5rem);
-    transition:
-      opacity 0.2s ease,
-      transform 0.2s ease,
-      visibility 0.2s,
-      background 0.2s ease,
-      color 0.2s ease;
-  }
-
-  .photo-to-top-visible {
-    opacity: 1;
-    visibility: visible;
-    transform: none;
-  }
-
-  .photo-to-top:hover {
-    background: var(--color-accent-hover);
-    border-color: var(--color-paper-light);
-    transform: translateY(-2px);
   }
 
   /* --- album + justified grid ------------------------------------------- */
