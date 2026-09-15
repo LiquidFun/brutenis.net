@@ -100,11 +100,16 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
         <button id="disable-attackers-btn" class="disable-attackers-btn">Disable Attackers</button>
       </div>
     </div>
-    <!-- Gyro permission overlay (iOS mobile only) -->
+    <!--
+      Tilt-controls dialog. Asks for the sensor on iOS, and doubles as the place
+      that explains why tilting is unavailable when it is — @scripts/yarn-cursor
+      rewrites the title and body and hides the grant button for the latter, so
+      the copy below is only the first thing it says.
+    -->
     <div id="gyro-permission-overlay" class="game-over-overlay start-hidden" transition:persist="gyro-permission-overlay">
       <div class="gyro-permission-box">
-        <p class="font-heading text-2xl text-text-charcoal mb-3">Tilt to play!</p>
-        <p class="font-body text-text-muted mb-4">
+        <p id="gyro-permission-title" class="font-heading text-2xl text-text-charcoal mb-3">Tilt to play!</p>
+        <p id="gyro-permission-body" class="font-body text-text-muted mb-4">
           Tilt your phone to bounce the yarn ball and defend your blog posts from monsters.
         </p>
         <button id="gyro-grant-btn" class="try-again-btn">Enable Gyroscope</button>

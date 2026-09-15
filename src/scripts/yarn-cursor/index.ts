@@ -518,62 +518,165 @@ function startGyro() {
   gyroActive = true;
 }
 
-/** Wait for a real deviceorientation event before starting; timeout → no gyro. */
-function probeGyro(): Promise<boolean> {
-  return new Promise((resolve) => {
-    let resolved = false;
-    const handler = (e: DeviceOrientationEvent) => {
-      if (e.beta == null && e.gamma == null) return;
-      if (resolved) return;
-      resolved = true;
-      window.removeEventListener("deviceorientation", handler);
-      resolve(true);
-    };
-    window.addEventListener("deviceorientation", handler);
-    setTimeout(() => {
-      if (resolved) return;
-      resolved = true;
-      window.removeEventListener("deviceorientation", handler);
-      resolve(false);
-    }, 1500);
+// ── Mobile bring-up ──
+
+/** How long to wait before reporting that no sensor readings are arriving. */
+const GYRO_PROBE_TIMEOUT = 3000;
+
+/** Whatever the overlay's primary button should do now; null while it is a notice. */
+let gyroGrantAction: (() => void) | null = null;
+let gyroOverlayBound = false;
+let gyroWatching = false;
+/**
+ * Mobile bring-up runs once per real page load rather than once per view
+ * transition. It used to run on every `astro:page-load`, which re-raised the
+ * permission dialog on each tap of the nav — and a "No thanks" only lasted until
+ * the visitor opened another page. One ask per visit, and declining sticks for
+ * as long as the visit does; a reload is the way back for anyone who wants it.
+ */
+let mobileInitDone = false;
+
+/**
+ * The overlay is `transition:persist`ed — the same buttons outlive every
+ * client-side navigation — so its listeners are bound exactly once and dispatch
+ * through `gyroGrantAction`. Re-binding per navigation would stack a fresh
+ * handler on each one, and iOS would then fire as many permission requests.
+ */
+function bindGyroOverlay() {
+  if (gyroOverlayBound) return;
+  const grant = document.getElementById("gyro-grant-btn");
+  const skip = document.getElementById("gyro-skip-btn");
+  if (!grant || !skip) return;
+  grant.addEventListener("click", () => {
+    hideGyroOverlay();
+    // Invoked straight from the click: iOS only honours requestPermission()
+    // while the gesture that led to it is still being processed.
+    gyroGrantAction?.();
   });
+  skip.addEventListener("click", hideGyroOverlay);
+  gyroOverlayBound = true;
 }
 
-async function initMobile() {
-  if (gyroActive) return;
+function setGyroOverlay(title: string, body: string) {
+  bindGyroOverlay();
+  const el = document.getElementById("gyro-permission-title");
+  const msg = document.getElementById("gyro-permission-body");
+  const overlay = document.getElementById("gyro-permission-overlay");
+  if (el) el.textContent = title;
+  if (msg) msg.textContent = body;
+  if (overlay) overlay.style.display = "flex";
+}
 
-  const DevOrient = DeviceOrientationEvent as any;
-  const needsPermission = typeof DevOrient?.requestPermission === "function";
+function hideGyroOverlay() {
+  const overlay = document.getElementById("gyro-permission-overlay");
+  if (overlay) overlay.style.display = "none";
+}
 
-  if (needsPermission) {
-    const overlay = document.getElementById("gyro-permission-overlay");
-    if (overlay) overlay.style.display = "flex";
+/** Offer to turn tilt controls on. `action` runs inside the button's click. */
+function showGyroPrompt(action: () => void) {
+  gyroGrantAction = action;
+  const grant = document.getElementById("gyro-grant-btn");
+  const skip = document.getElementById("gyro-skip-btn");
+  if (grant) { grant.style.display = ""; grant.textContent = "Enable Gyroscope"; }
+  if (skip) skip.textContent = "No thanks";
+  setGyroOverlay(
+    "Tilt to play!",
+    "Tilt your phone to bounce the yarn ball and defend your blog posts from monsters.",
+  );
+}
 
-    document.getElementById("gyro-grant-btn")?.addEventListener(
-      "click",
-      async () => {
-        if (overlay) overlay.style.display = "none";
-        const result = await DevOrient.requestPermission().catch(() => "denied");
-        if (result === "granted") {
-          const hasGyro = await probeGyro();
-          if (hasGyro) startGyro();
-        }
-      },
-      { once: true },
-    );
+/** Say why tilting is not going to work. Dismiss-only — there is nothing to grant. */
+function showGyroNotice(title: string, body: string) {
+  gyroGrantAction = null;
+  const grant = document.getElementById("gyro-grant-btn");
+  const skip = document.getElementById("gyro-skip-btn");
+  if (grant) grant.style.display = "none";
+  if (skip) skip.textContent = "OK";
+  setGyroOverlay(title, body);
+}
 
-    document.getElementById("gyro-skip-btn")?.addEventListener(
-      "click",
-      () => {
-        if (overlay) overlay.style.display = "none";
-      },
-      { once: true },
+/**
+ * Watch for the first real `deviceorientation` reading and start the game on it.
+ *
+ * Deliberately never gives up. The old version resolved false after 1.5s and
+ * that was the end of tilt controls for the visit, which threw away every case
+ * where the sensor is simply late: a cold-started sensor stack, a backgrounded
+ * tab that only gets readings once it is foregrounded, or a permission the
+ * visitor grants in browser settings and then comes back to. Nothing about
+ * staying subscribed costs anything — no events is exactly no work.
+ *
+ * `onSilence` fires once if nothing has arrived by the time it is due, purely so
+ * the failure can be reported; a reading after that still starts the game.
+ */
+function watchForGyro(onSilence?: () => void) {
+  if (gyroWatching) return;
+  gyroWatching = true;
+  let started = false;
+  const handler = (e: DeviceOrientationEvent) => {
+    // Chromium delivers an all-null event on hardware with no sensor, so a
+    // reading is only real if it carries an angle.
+    if (e.beta == null && e.gamma == null) return;
+    if (started) return;
+    started = true;
+    window.removeEventListener("deviceorientation", handler);
+    startGyro();
+  };
+  window.addEventListener("deviceorientation", handler);
+  if (onSilence) setTimeout(() => { if (!started) onSilence(); }, GYRO_PROBE_TIMEOUT);
+}
+
+/**
+ * Bring up tilt controls, and say so when they cannot come up.
+ *
+ * Every failure here looks the same from the player's side — a ball that never
+ * moves — so each one names itself instead. The secure-context case is the one
+ * that catches people out: motion sensors are gated on https in every mobile
+ * browser, so a phone pointed at a plain-http origin (the LAN dev server, most
+ * often) gets no events at all, and iOS does not even expose the permission
+ * prompt to ask with. That is indistinguishable from "this phone has no
+ * gyroscope" unless something says which it is.
+ */
+function initMobile() {
+  if (gyroActive || mobileInitDone) return;
+  mobileInitDone = true;
+
+  if (!window.isSecureContext) {
+    showGyroNotice(
+      "Tilt needs https",
+      "Phone browsers only hand out motion sensors on a secure origin, so this page cannot read the tilt. Open it over https and the game works.",
     );
     return;
   }
 
-  const hasGyro = await probeGyro();
-  if (hasGyro) startGyro();
+  const DevOrient = DeviceOrientationEvent as any;
+  // iOS gates orientation behind a prompt that only a user gesture may raise.
+  if (typeof DevOrient?.requestPermission === "function") {
+    showGyroPrompt(async () => {
+      const result = await DevOrient.requestPermission().catch(() => "denied");
+      if (result !== "granted") {
+        showGyroNotice(
+          "Motion access is off",
+          "Safari declined the sensor. Look for \"Motion & Orientation Access\" in iOS Settings under Safari, turn it on, then reload.",
+        );
+        return;
+      }
+      watchForGyro(() => showGyroNotice(
+        "No tilt readings",
+        "Motion access was granted but this phone is not reporting any orientation. Nothing more the page can do, sorry!",
+      ));
+    });
+    return;
+  }
+
+  // Everywhere else the sensor is simply there or not. Failing silently is the
+  // right call: a visitor who never opens the game should not be told about a
+  // sensor they did not ask to use.
+  watchForGyro(() => console.info(
+    "[yarn-cursor] No deviceorientation readings in %dms — tilt controls stay off. " +
+    "On Android this is usually the browser's Motion sensors site permission, or an OS-level " +
+    "sensor block (GrapheneOS ships one per app).",
+    GYRO_PROBE_TIMEOUT,
+  ));
 }
 
 function bootstrap() {
