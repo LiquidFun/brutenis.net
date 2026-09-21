@@ -64,6 +64,22 @@ export default defineConfig({
     },
   ],
 
+  // Off, and it has to be set explicitly: <ClientRouter /> calls
+  // `init({ prefetchAll: true })` unless this is literally `false`, so leaving
+  // it unset means every link is fetched on hover.
+  //
+  // Two reasons it is the wrong default here. It makes the access log useless
+  // as a readership measure — the game has the cursor sweeping across the
+  // listing pages constantly, so every .post-card it drifts over would record a
+  // view for a post nobody opened. And the strategy is `hover`, which touch
+  // devices do not fire, so the visitors it could help least are the ones on
+  // phones — a large share of the traffic here.
+  //
+  // What it costs: one round trip per in-site navigation, ~20ms from Germany.
+  // Enabling `encode` in the Caddyfile took roughly 13KB off every page, which
+  // is the larger number and applies to first loads and mobile too.
+  prefetch: false,
+
   // Astro's dev toolbar sits bottom-centre, which on a phone is exactly where
   // the lightbox caption and the game HUD are — it covers what it is meant to
   // help inspect. Dev-only either way, so nothing about the built site changes.

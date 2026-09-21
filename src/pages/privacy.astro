@@ -1,0 +1,255 @@
+---
+import BaseLayout from "@layouts/BaseLayout.astro";
+
+/*
+  Kept deliberately specific: it names the actual storage keys, the actual
+  retention windows from the backend's config, and the actual columns written.
+  If the game's storage changes, this page changes with it — the timing of the
+  `_bnet_uid` cookie in particular is described in app/player_id.py in the
+  backend repo, and the two are meant to be edited together.
+*/
+const lastUpdated = "20 September 2026";
+---
+
+<BaseLayout
+  title="Privacy"
+  description="What brutenis.net stores, when, and why — in plain terms."
+>
+  <h1 class="text-5xl font-heading font-bold text-yarn-coral mb-8">Privacy</h1>
+  <div class="prose">
+    <p>
+      The short version: reading this site stores nothing in your browser. The
+      server notes the request in a log, with your address truncated first.
+      Playing the game stores a little in your browser. Only submitting a score
+      to the <a href="/leaderboard">leaderboard</a> creates anything that
+      identifies you across visits, and it is one random number.
+    </p>
+    <p>
+      There is no advertising, no tracking pixels, no third-party fonts or CDN,
+      and no embedded content from anywhere else. No analytics script runs on
+      these pages. The only request your browser makes to another company is one
+      you make yourself by clicking a link. Visitor counts come from the server's
+      own logs, with addresses truncated before they are written — described
+      under <a href="#logs">server logs</a> below.
+    </p>
+
+    <h2>Who is responsible</h2>
+    <p>
+      Controller under Art. 4(7) GDPR:<br />
+      Brutenis Gliwa<br />
+      <a href="mailto:brutenis@gmail.com">brutenis@gmail.com</a>
+    </p>
+    <p>
+      That address is read by a person, and it is the right one for anything on
+      this page — a leaderboard entry you want removed, a question about what is
+      stored, or a correction to something here that is wrong.
+    </p>
+
+    <h2>What is stored on your device</h2>
+    <p>
+      All of it is created by the site itself; none of it is readable by anyone
+      else. Because each item is needed for something you asked the site to do,
+      none of it requires a consent banner under §25 Abs. 2 TDDDG — which is why
+      you are not being shown one.
+    </p>
+    <ul>
+      <li>
+        <code>theme</code> — whether you picked light or dark. Local to your
+        browser, never sent anywhere.
+      </li>
+      <li>
+        <code>attackers-enabled</code> — whether you turned the game on or off.
+        Local to your browser, never sent anywhere.
+      </li>
+      <li>
+        <code>leaderboard-name</code> — the name you last typed into the submit
+        box, so you do not have to type it again. It leaves your browser only if
+        you submit a score.
+      </li>
+      <li>
+        <code>bnet-session-id</code> and <code>bnet-session-token</code> —
+        created the first time you hit a monster. They identify the current run
+        so the server can tell that a submitted score belongs to a game it
+        actually handed out. Stored in <code>sessionStorage</code>, so they are
+        gone when you close the tab.
+      </li>
+      <li>
+        <code>lastSubmittedRank</code> — the position your last submitted score
+        reached, so the leaderboard page can highlight your row when it sends you
+        there. Also <code>sessionStorage</code>, also gone with the tab.
+      </li>
+      <li>
+        <code>_bnet_uid</code> — a random identifier, stored as a cookie for 90
+        days. <strong>It is written only at the moment you submit a score</strong>,
+        never on a page view and never for someone who only plays. It is
+        <code>HttpOnly</code> (no script on the page can read it) and scoped to
+        <code>/api</code>, so it is sent with the game's requests and not with
+        ordinary page loads.
+      </li>
+    </ul>
+
+    <h2>Why the identifier exists</h2>
+    <p>
+      Two reasons, both of which are the reason the leaderboard works at all.
+      It lets the board show your best run rather than one row per attempt, and
+      it lets a submitted score be weighed against what the same player has done
+      before, which is most of what stops the board filling up with impossible
+      numbers.
+    </p>
+    <p>
+      It is a random number and nothing else. It is not derived from your device,
+      your address, or anything about you; it cannot follow you to another site;
+      and it is not combined with any other source. Clearing your browser's site
+      data for brutenis.net ends it, and the next score you submit starts a new
+      one.
+    </p>
+
+    <h2>What reaches the server</h2>
+    <p>When you start a game, a row is created holding a random session
+    identifier, the player identifier described above, and the time.</p>
+    <p>When you submit a score, that row also receives:</p>
+    <ul>
+      <li>the name you typed — anything you like, including something made up;</li>
+      <li>your score, level, and how long the run lasted;</li>
+      <li>whether you played on desktop or mobile, and the version of the game;</li>
+      <li>
+        a log of the run: the kills, level-ups and pickups it consisted of, each
+        with a timestamp in milliseconds from the start. This is what the
+        anti-cheat check is run against.
+      </li>
+    </ul>
+    <p>
+      The name, score, level, duration, date, weapon and platform are shown
+      publicly on the leaderboard. Nothing else is.
+    </p>
+
+    <h2>Legal bases</h2>
+    <ul>
+      <li>
+        Everything up to and including starting a game: storage necessary for a
+        function you requested, §25 Abs. 2 TDDDG. No separate consent is needed
+        and none is asked for.
+      </li>
+      <li>
+        Publishing your chosen name and score on the leaderboard: your consent,
+        Art. 6(1)(a) GDPR, given by filling in the name and pressing submit. You
+        can withdraw it at any time by asking for the entry to be removed.
+      </li>
+      <li>
+        Checking a submitted run for cheating, and keeping the site available:
+        legitimate interests, Art. 6(1)(f) GDPR — an honest leaderboard and a
+        working server. Recital 47 names fraud prevention as such an interest.
+      </li>
+    </ul>
+
+    <h2>How long it is kept</h2>
+    <ul>
+      <li>
+        A game that was started but never submitted: deleted automatically after
+        <strong>2 hours</strong>.
+      </li>
+      <li>
+        The run log: deleted automatically after <strong>7 days</strong>. The
+        leaderboard entry survives; the behavioural trace behind it does not.
+      </li>
+      <li>
+        The leaderboard entry itself — name, score, level, duration, date: kept
+        until you ask for it to be removed.
+      </li>
+      <li>
+        The <code>_bnet_uid</code> cookie: 90 days in your browser, restarted
+        each time you submit a score.
+      </li>
+      <li>
+        Web server logs: rotated and deleted as they age. The summary built from
+        them is kept indefinitely, and holds counts rather than addresses.
+      </li>
+    </ul>
+
+    <h2 id="logs">Server logs and hosting</h2>
+    <p>
+      The site runs on a server rented from Hetzner Online GmbH in Germany, which
+      acts as a processor under Art. 28 GDPR. Your requests reach that server, so
+      Hetzner necessarily handles them in transit; no data is transferred outside
+      the EU.
+    </p>
+    <p>
+      The web server keeps an access log, so that I can see roughly how many
+      people visit and which pages they read. Each line records the time, the
+      page requested and how it was requested, the response status and size, the
+      browser's user agent, the page you followed a link from if there was one,
+      and the network the request came from.
+    </p>
+    <p>
+      <strong>That last part is truncated before it is written.</strong> An
+      address is cut down to its network block — the last part of an IPv4 address
+      is replaced with zero, and an IPv6 address keeps only its site prefix. No
+      full address ever reaches this log. What is left is coarse enough that it
+      cannot pick out a household, and precise enough to say which country a
+      visit came from, which is the only thing it is used for.
+    </p>
+    <p>
+      Those log files are rotated and deleted as they age. What outlasts them is
+      a summary — counts of pages, days, browsers and countries — which contains
+      no addresses at all. It is not published; it sits behind a password and only
+      I can see it. The basis is Art. 6(1)(f) GDPR: knowing whether anyone reads
+      the thing, and noticing when the site is being attacked.
+    </p>
+    <p>
+      There is no analytics script involved in any of this. Nothing is added to
+      the pages, nothing is stored on your device, and nothing is sent to another
+      company. It is the server writing down the requests it already had to
+      answer.
+    </p>
+    <p>
+      The game's API deliberately does <em>not</em> keep a request log of its own;
+      it would have recorded full addresses, and the masked log above covers the
+      same requests. It does note that a session was created, and the name and
+      score of a submitted run. The firewall separately records connections it
+      rejects, and those entries do hold the full address they came from — it is
+      the one place on the server that keeps one. That is ordinary practice for
+      spotting attacks, and it covers connections that were refused rather than
+      visits to the site.
+    </p>
+
+    <h2>Your rights</h2>
+    <p>
+      You have the right to access your data (Art. 15), to have it corrected
+      (Art. 16) or erased (Art. 17), to restrict its processing (Art. 18), to
+      receive it in a portable form (Art. 20), and to object to processing based
+      on legitimate interests (Art. 21). Where processing rests on consent, you
+      can withdraw that consent at any time without affecting what was lawful
+      before.
+    </p>
+    <p>
+      In practice, for a leaderboard entry you can do it yourself: your own row
+      on the <a href="/leaderboard">leaderboard</a> carries a
+      <strong>Remove</strong> button, which deletes every run you have submitted
+      and needs no email and no waiting. If that button is not there — most
+      likely because you have since cleared your cookies — email the address
+      above with the name and score instead. You are also free to complain to a
+      data protection supervisory authority, which for a controller in Germany is
+      the authority of the federal state they are established in.
+    </p>
+
+    <h2>Doing it yourself</h2>
+    <p>
+      Clearing site data for brutenis.net in your browser's settings removes
+      everything described in the first section, including the identifier.
+    </p>
+    <p>
+      <strong>Do it in that order, though: scores first.</strong> The Remove
+      button on the leaderboard works by recognising the identifier in your
+      browser, so once you have cleared it, neither you nor the server can tell
+      which entry was yours, and the only route left is emailing me. Remove the
+      entry first, then clear whatever you like.
+    </p>
+
+    <h2>Changes</h2>
+    <p>
+      This page is versioned alongside the site's source code, so its history is
+      public in the <a href="https://github.com/LiquidFun/brutenis.net">repository</a>.
+      Last updated: {lastUpdated}.
+    </p>
+  </div>
+</BaseLayout>

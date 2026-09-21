@@ -9,6 +9,42 @@ import BaseLayout from "@layouts/BaseLayout.astro";
     public leaderboard; nothing is deleted.
   </p>
 
+  {/*
+    Overview panel. Everything here comes from the sessions table — these are
+    *game* numbers. Page views are a separate question, answered by the GoAccess
+    report at /admin/stats, which this page deliberately knows nothing about.
+  */}
+  <section id="admin-stats" class="admin-stats start-hidden" aria-labelledby="stats-heading">
+    <h2 id="stats-heading" class="stats-heading">Overview</h2>
+    <div class="stat-tiles" id="stat-tiles"></div>
+
+    <figure class="chart-figure">
+      <figcaption class="chart-caption">
+        <span>Runs submitted per day &middot; last 30 days (UTC)</span>
+        <span class="chart-peak" id="chart-peak"></span>
+      </figcaption>
+      {/*
+        aria-hidden, with the <details> table below as the real accessible
+        version. Labelling 30 bars individually produces a screen-reader
+        experience nobody wants; a table is the thing people actually use.
+      */}
+      <div class="chart-plot" id="chart-plot" aria-hidden="true"></div>
+      <div class="chart-axis">
+        <span id="chart-from"></span>
+        <span id="chart-to"></span>
+      </div>
+    </figure>
+
+    <p class="stat-note" id="stat-note"></p>
+
+    <details class="chart-table">
+      <summary>Table view</summary>
+      <div class="chart-table-wrap">
+        <table class="admin-table" id="chart-table"></table>
+      </div>
+    </details>
+  </section>
+
   <p id="admin-status" class="font-heading text-xl text-text-muted">Loading runs...</p>
 
   <div id="admin-table-wrap" class="admin-table-wrap start-hidden">
@@ -263,13 +299,336 @@ import BaseLayout from "@layouts/BaseLayout.astro";
     }
   }
 
-  document.addEventListener("astro:page-load", loadAdmin);
+  // ── Overview panel ──
+
+  interface DayCount {
+    day: string;
+    runs: number;
+    players: number;
+  }
+
+  interface AdminStats {
+    submitted_total: number;
+    players_total: number;
+    submitted_24h: number;
+    submitted_7d: number;
+    players_7d: number;
+    in_progress: number;
+    retention_hours: number;
+    mobile_runs: number;
+    desktop_runs: number;
+    invalid_runs: number;
+    best_score: number;
+    daily: DayCount[];
+  }
+
+  function tile(value: string, label: string): HTMLElement {
+    const el = document.createElement("div");
+    el.className = "stat-tile";
+    const v = document.createElement("span");
+    v.className = "stat-value";
+    v.textContent = value;
+    const l = document.createElement("span");
+    l.className = "stat-label";
+    l.textContent = label;
+    el.append(v, l);
+    return el;
+  }
+
+  /** "12 Sep", for the axis ends and the table. */
+  function shortDay(iso: string): string {
+    const d = new Date(`${iso}T00:00:00Z`);
+    if (Number.isNaN(d.getTime())) return iso;
+    return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+  }
+
+  function renderChart(daily: DayCount[]) {
+    const plot = document.getElementById("chart-plot");
+    const table = document.getElementById("chart-table");
+    if (!plot || !table) return;
+
+    // A flat-zero series would otherwise divide by zero; 1 keeps every bar at
+    // the floor instead of making them all full height.
+    const peak = Math.max(1, ...daily.map((d) => d.runs));
+
+    plot.replaceChildren();
+    for (const d of daily) {
+      const bar = document.createElement("div");
+      bar.className = "bar";
+      // A day with no runs still gets a visible stub, so the gap reads as "no
+      // runs" rather than as a rendering failure.
+      bar.style.setProperty("--fill", `${d.runs === 0 ? 0 : (d.runs / peak) * 100}%`);
+      if (d.runs === peak) bar.classList.add("bar-peak");
+
+      const tip = document.createElement("span");
+      tip.className = "bar-tip";
+      tip.textContent = `${shortDay(d.day)}: ${d.runs} run${d.runs === 1 ? "" : "s"}, ${d.players} player${d.players === 1 ? "" : "s"}`;
+      bar.appendChild(tip);
+      // Focusable so the tooltip is reachable without a pointer.
+      bar.tabIndex = 0;
+      plot.appendChild(bar);
+    }
+
+    const peakEl = document.getElementById("chart-peak");
+    if (peakEl) peakEl.textContent = `peak ${peak}/day`;
+    const from = document.getElementById("chart-from");
+    const to = document.getElementById("chart-to");
+    if (from && daily.length) from.textContent = shortDay(daily[0].day);
+    if (to && daily.length) to.textContent = shortDay(daily[daily.length - 1].day);
+
+    const head = document.createElement("tr");
+    for (const label of ["Day", "Runs", "Players"]) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      head.appendChild(th);
+    }
+    const body = document.createElement("tbody");
+    for (const d of daily) {
+      const tr = document.createElement("tr");
+      for (const [i, text] of [shortDay(d.day), String(d.runs), String(d.players)].entries()) {
+        const td = document.createElement("td");
+        if (i > 0) td.className = "num font-mono";
+        td.textContent = text;
+        tr.appendChild(td);
+      }
+      body.appendChild(tr);
+    }
+    const thead = document.createElement("thead");
+    thead.appendChild(head);
+    table.replaceChildren(thead, body);
+  }
+
+  async function loadStats() {
+    const section = document.getElementById("admin-stats");
+    const tiles = document.getElementById("stat-tiles");
+    if (!section || !tiles) return;
+
+    try {
+      const resp = await fetch("/admin/api/stats", { headers: ADMIN_HEADERS });
+      if (!resp.ok) throw new Error(String(resp.status));
+      const s = (await resp.json()) as AdminStats;
+
+      const platformRuns = s.mobile_runs + s.desktop_runs;
+      const mobilePct = platformRuns === 0 ? 0 : Math.round((s.mobile_runs / platformRuns) * 100);
+
+      tiles.replaceChildren(
+        tile(s.players_total.toLocaleString(), "players, all time"),
+        tile(s.submitted_total.toLocaleString(), "runs submitted"),
+        tile(s.players_7d.toLocaleString(), "players, 7 days"),
+        tile(s.submitted_7d.toLocaleString(), "runs, 7 days"),
+        tile(s.best_score.toLocaleString(), "best score"),
+        tile(`${mobilePct}%`, "played on mobile"),
+      );
+
+      renderChart(s.daily);
+
+      const note = document.getElementById("stat-note");
+      if (note) {
+        // The retention caveat is the whole reason this sentence exists: an
+        // unfinished session is deleted after a couple of hours, so this figure
+        // is a snapshot of right now and not comparable to the others.
+        note.textContent =
+          `${s.in_progress} game${s.in_progress === 1 ? "" : "s"} in progress ` +
+          `(started within the last ${s.retention_hours}h and not yet submitted — ` +
+          `older unfinished sessions are deleted, so this is not a running total). ` +
+          `${s.invalid_runs} submitted run${s.invalid_runs === 1 ? " is" : "s are"} ` +
+          `flagged invalid and hidden from the leaderboard; they are counted above.`;
+      }
+
+      section.style.display = "block";
+    } catch {
+      // The runs table is the page's real job — a broken overview must not
+      // stop it rendering, so this fails quietly and leaves the section hidden.
+    }
+  }
+
+  document.addEventListener("astro:page-load", () => {
+    loadAdmin();
+    loadStats();
+  });
 </script>
 
 <!-- is:global is required: the rows are built at runtime by the script above, so
      they never receive Astro's scoping attribute and scoped rules would not match
      them. Every selector is therefore rooted at .admin-table* to avoid leaking. -->
 <style is:global>
+  /* ── Overview panel ──
+     The bar colour is NOT --color-yarn-teal. That one is a decorative accent
+     picked to sit on the cream paper; as a data mark it lands at 1.88:1 against
+     the light surface, which is a stripe you cannot read. These two are the
+     nearest steps in the same hue that clear both the lightness band and 3:1
+     contrast against each theme's own surface, checked rather than eyeballed.
+     Dark is its own step, not a flip of the light one. */
+  .admin-stats {
+    --chart-mark: #0f9c8f;
+    margin-bottom: 2.5rem;
+  }
+
+  html.dark .admin-stats {
+    --chart-mark: #1aa79c;
+  }
+
+  .stats-heading {
+    font-family: var(--font-heading);
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--color-text-charcoal);
+    margin-bottom: 0.75rem;
+  }
+
+  .stat-tiles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .stat-tile {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    padding: 0.75rem 0.9rem;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border-soft);
+    border-radius: 0.6rem;
+  }
+
+  /* Text tokens, never the mark colour: the number is the value, not a series. */
+  .stat-value {
+    font-family: var(--font-heading);
+    font-size: 1.9rem;
+    font-weight: 700;
+    line-height: 1.1;
+    color: var(--color-text-charcoal);
+  }
+
+  .stat-label {
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+  }
+
+  .chart-figure {
+    margin: 0 0 0.75rem;
+  }
+
+  .chart-caption {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    margin-bottom: 0.4rem;
+  }
+
+  .chart-peak {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    white-space: nowrap;
+  }
+
+  .chart-plot {
+    display: flex;
+    align-items: flex-end;
+    /* 2px between adjacent bars, so neighbouring days never fuse into one mark. */
+    gap: 2px;
+    height: 7rem;
+    /* Recessive: a hairline baseline, no grid. The numbers are in the tiles and
+       the tooltip; the chart's job is the shape. */
+    border-bottom: 1px solid var(--color-border-soft);
+    padding-bottom: 1px;
+  }
+
+  .bar {
+    position: relative;
+    flex: 1;
+    min-width: 0;
+    /* The track is transparent; only --fill is painted. A zero day therefore
+       shows the 2px floor below rather than a full-height pale bar. */
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+  }
+
+  .bar::after {
+    content: "";
+    display: block;
+    width: 100%;
+    height: max(var(--fill), 2px);
+    background: var(--chart-mark);
+    /* Rounded data-end, square against the baseline it is anchored to. */
+    border-radius: 3px 3px 0 0;
+  }
+
+  .bar-peak::after {
+    /* Secondary encoding for the tallest day, so "which was the best day" does
+       not rest on comparing two similar heights by eye. */
+    outline: 2px solid var(--color-text-muted);
+    outline-offset: 1px;
+  }
+
+  .bar:hover::after,
+  .bar:focus-visible::after {
+    filter: brightness(1.15);
+  }
+
+  .bar:focus-visible {
+    outline: none;
+  }
+
+  .bar-tip {
+    position: absolute;
+    bottom: calc(100% + 0.4rem);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2;
+    display: none;
+    white-space: nowrap;
+    font-family: var(--font-body);
+    font-size: 0.8rem;
+    padding: 0.25rem 0.5rem;
+    border-radius: 0.35rem;
+    background: var(--color-text-charcoal);
+    color: var(--color-bg-cream);
+    pointer-events: none;
+  }
+
+  .bar:hover .bar-tip,
+  .bar:focus-visible .bar-tip {
+    display: block;
+  }
+
+  .chart-axis {
+    display: flex;
+    justify-content: space-between;
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
+    color: var(--color-text-muted);
+    margin-top: 0.3rem;
+  }
+
+  .stat-note {
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    margin-bottom: 0.75rem;
+  }
+
+  .chart-table > summary {
+    font-family: var(--font-body);
+    font-size: 0.85rem;
+    color: var(--color-text-muted);
+    cursor: pointer;
+  }
+
+  .chart-table-wrap {
+    max-height: 18rem;
+    overflow-y: auto;
+    margin-top: 0.5rem;
+  }
+
   .admin-table-wrap {
     overflow-x: auto;
   }

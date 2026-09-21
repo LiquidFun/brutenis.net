@@ -14,6 +14,14 @@ export interface LeaderboardEntry {
   date: string;
   weapon: string;
   platform: string;
+  /**
+   * Set by the server for the caller's own row. It works out who that is from
+   * the `_bnet_uid` cookie, which rides along automatically because it is
+   * scoped to /api — and which this code could not read even if it wanted to,
+   * since the cookie is HttpOnly. That is deliberate: the board is public, so
+   * it must never carry identifiers a visitor could collect.
+   */
+  is_you: boolean;
 }
 
 declare const __GAME_VERSION__: string;
@@ -114,4 +122,19 @@ export async function fetchLeaderboard(
   const resp = await apiFetch(`/api/leaderboard?limit=${limit}`);
   if (!resp.ok) throw new Error(`Fetch failed: ${resp.status}`);
   return resp.json();
+}
+
+/**
+ * Remove every run belonging to this browser from the leaderboard.
+ *
+ * Takes no arguments because it needs none: the server identifies the caller
+ * from the cookie. Removes all of the player's runs rather than one row, since
+ * the board only ever shows a player's best — deleting just that would promote
+ * the next one and read as a failed click.
+ */
+export async function deleteMyEntries(): Promise<number> {
+  const resp = await apiFetch("/api/leaderboard/me", { method: "DELETE" });
+  if (resp.status === 404) return 0; // nothing of ours on the board
+  if (!resp.ok) throw new Error(`Delete failed: ${resp.status}`);
+  return (await resp.json()).removed as number;
 }

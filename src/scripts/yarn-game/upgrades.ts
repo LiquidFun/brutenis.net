@@ -43,6 +43,10 @@ const MAX_SHIELD_HP = 3;
 const SHIELD_REGEN_RATE = 0.15;
 const BALL_RADIUS_INCREASE = 5;
 const PICKUP_RADIUS = 18;
+// Keep pickups clear of the screen edges and of the HUD along the top.
+const PICKUP_MARGIN_X = 80;
+const PICKUP_MARGIN_TOP = 140;
+const PICKUP_MARGIN_BOTTOM = 140;
 const MAGNET_RADIUS = 200;
 const MAGNET_FORCE = 8000;
 const CARD_REPAIR_RATE = 0.3; // HP per second
@@ -128,8 +132,9 @@ export class UpgradeManager {
     // Find a position avoiding edges and cards
     let x = 0, y = 0;
     for (let attempt = 0; attempt < 15; attempt++) {
-      x = 80 + Math.random() * (window.innerWidth - 160);
-      y = 140 + Math.random() * (window.innerHeight - 280);
+      x = PICKUP_MARGIN_X + Math.random() * (window.innerWidth - PICKUP_MARGIN_X * 2);
+      y = PICKUP_MARGIN_TOP +
+        Math.random() * (window.innerHeight - PICKUP_MARGIN_TOP - PICKUP_MARGIN_BOTTOM);
       if (!this.overlapsCard(x, y)) break;
     }
 
@@ -145,6 +150,27 @@ export class UpgradeManager {
       isFirst,
     });
 
+  }
+
+  /**
+   * Pull pickups back inside the viewport after it changes size.
+   *
+   * Phone viewports change height whenever the URL bar shows or hides, and it
+   * reappears on returning to a backgrounded tab. Pickups sit at fixed
+   * coordinates for their whole life, so one spawned low on the screen ends up
+   * below the shortened viewport: invisible, unreachable, and never coming back
+   * on its own. Desktop windows don't resize themselves, which is why this only
+   * ever bites on mobile.
+   */
+  clampToViewport(w: number, h: number) {
+    for (const p of this.pickups) {
+      // The outer max guards a viewport too short to hold both margins.
+      p.x = Math.min(Math.max(p.x, PICKUP_MARGIN_X), Math.max(PICKUP_MARGIN_X, w - PICKUP_MARGIN_X));
+      p.y = Math.min(
+        Math.max(p.y, PICKUP_MARGIN_TOP),
+        Math.max(PICKUP_MARGIN_TOP, h - PICKUP_MARGIN_BOTTOM),
+      );
+    }
   }
 
   private overlapsCard(x: number, y: number): boolean {

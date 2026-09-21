@@ -2,6 +2,7 @@ import { EventTracker } from "./event-tracker";
 import { submitScore as apiSubmitScore, clearSession } from "./leaderboard-api";
 import { MonsterManager } from "./monsters";
 import { UpgradeManager } from "./upgrades";
+import { setWakeLockDesired } from "./wake-lock";
 import { CANVAS_HEADING_FONT } from "../fonts";
 
 let canvas: HTMLCanvasElement | null = null;
@@ -160,6 +161,7 @@ function resize() {
   if (!canvas) return;
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
+  upgrades?.clampToViewport(canvas.width, canvas.height);
 }
 
 let hudDisableLabel: HTMLElement | null = null;
@@ -265,6 +267,9 @@ function checkYarnBallVsMonsters() {
   }
 }
 
+// Past this score the visitor is clearly playing, not just passing through.
+const WAKE_LOCK_SCORE = 10;
+
 function animate(time: number) {
   if (!ctx || !canvas || !monsters) {
     animId = requestAnimationFrame(animate);
@@ -277,6 +282,10 @@ function animate(time: number) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   const active = areAttackersEnabled() && isListingPage();
+
+  // Keep the screen awake only for someone actually playing — a visitor idling
+  // on the listing page should still get their normal screen timeout.
+  setWakeLockDesired(active && !monsters.gameOver && monsters.score > WAKE_LOCK_SCORE);
 
   if (active) {
     monsters.paused = false;
