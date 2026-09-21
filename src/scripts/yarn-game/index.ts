@@ -377,7 +377,6 @@ function initScoreSubmitUI() {
         // data-astro-reload: full page load so the game state resets, like "Try Again"
         rankEl.innerHTML = `You placed #${result.rank}! <a href="/leaderboard" class="submit-rank-link" data-astro-reload>View Leaderboard</a>`;
         rankEl.style.display = "block";
-        sessionStorage.setItem("lastSubmittedRank", String(result.rank));
       } else if (!result.accepted && rankEl) {
         rankEl.textContent = "Score recorded, but flagged as implausible.";
         rankEl.style.display = "block";

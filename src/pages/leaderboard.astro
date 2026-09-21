@@ -75,8 +75,6 @@ import BaseLayout from "@layouts/BaseLayout.astro";
     button.textContent = "Removing...";
     try {
       await deleteMyEntries();
-      // Otherwise the next load highlights whichever row inherited that rank.
-      sessionStorage.removeItem("lastSubmittedRank");
       await loadLeaderboard();
     } catch {
       button.disabled = false;
@@ -105,15 +103,10 @@ import BaseLayout from "@layouts/BaseLayout.astro";
         return;
       }
 
-      const highlightRank = sessionStorage.getItem("lastSubmittedRank");
       const medals = ["", "\u{1F947}", "\u{1F948}", "\u{1F949}"];
 
       for (const entry of data.entries) {
         const tr = document.createElement("tr");
-        if (highlightRank && entry.rank === Number(highlightRank)) {
-          tr.classList.add("lb-highlight");
-        }
-
         if (entry.rank <= 3) tr.classList.add(`lb-top${entry.rank}`);
 
         const rankCell = entry.rank <= 3
@@ -229,8 +222,15 @@ import BaseLayout from "@layouts/BaseLayout.astro";
     background: rgba(255, 107, 107, 0.07);
   }
 
-  /* Your own row. A left edge rather than a fill, so it does not fight with
-     .lb-highlight (the row you just submitted) when they are the same row. */
+  /* Your own row, as the server identified it. This replaced a highlight driven
+     by a rank number stashed at submission time, which went wrong twice over:
+     anyone placing above you afterwards shifted you down and left the marker on
+     a stranger, and a score that was not your best had no row here at all,
+     since the board shows one row per player. */
+  .leaderboard-table tbody tr.lb-you {
+    background: rgba(78, 205, 196, 0.14);
+  }
+
   .leaderboard-table tbody tr.lb-you td:first-child {
     box-shadow: inset 3px 0 0 var(--color-yarn-teal);
   }
@@ -340,10 +340,6 @@ import BaseLayout from "@layouts/BaseLayout.astro";
   .leaderboard-table .lb-top2 .lb-name,
   .leaderboard-table .lb-top3 .lb-name { font-size: 1.75rem; }
 
-  .leaderboard-table .lb-highlight {
-    box-shadow: inset 3px 0 0 var(--color-yarn-teal);
-    background: rgba(78, 205, 196, 0.14);
-  }
 
   @media (max-width: 639px) {
     .leaderboard-table .lb-date,
