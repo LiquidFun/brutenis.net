@@ -1,7 +1,7 @@
 import { VerletRope } from "./verlet-rope";
 import { YarnBall } from "./yarn-ball";
 import { drawRope, drawYarnBall } from "./renderer";
-import { GyroBall } from "./gyro-ball";
+import { GyroBall, agitationDecay } from "./gyro-ball";
 import { WebAnchorManager } from "./web-anchors";
 
 let canvas: HTMLCanvasElement | null = null;
@@ -23,6 +23,8 @@ interface RopeEntry {
   frozen: number;
   frozenX: number;
   frozenY: number;
+  /** Recent peak speed of the ball end, px/s — see GyroBall.agitation. */
+  agitation: number;
 }
 let ropes: RopeEntry[] = [];
 
@@ -89,18 +91,21 @@ export function getYarnBallPosition(): { x: number; y: number } | null {
 (window as any).__yarnCursorGetBallPos = getYarnBallPosition;
 
 // ── Expose all ball positions (for multi-ball hit detection) ──
-function getAllBallPositions(): Array<{ x: number; y: number; radius: number }> {
+// `agitation` is the ball's recent peak speed in px/s, which the game uses to
+// tell a controlled touch from a wild one (see phase shields in monsters.ts).
+function getAllBallPositions(): Array<{ x: number; y: number; radius: number; agitation: number }> {
   if (gyroActive) {
     return gyroBalls.map((gb) => ({
       x: gb.x,
       y: gb.y,
       radius: gb.radius,
+      agitation: gb.agitation,
     }));
   }
   return ropes.map((entry) => {
     const pts = entry.rope.points;
     const last = pts[pts.length - 1];
-    return { x: last.x, y: last.y, radius: entry.ball.radius };
+    return { x: last.x, y: last.y, radius: entry.ball.radius, agitation: entry.agitation };
   });
 }
 (window as any).__yarnCursorGetAllBallPositions = getAllBallPositions;
@@ -127,7 +132,7 @@ function addBall() {
     const newRope = new VerletRope(mouseX, mouseY, cfg.numPoints, cfg.segLen);
     const newBall = new YarnBall(14, cfg.color);
     newBall.radiusBonus = ballRadiusBonus;
-    ropes.push({ rope: newRope, ball: newBall, color: cfg.color, frozen: 0, frozenX: 0, frozenY: 0 });
+    ropes.push({ rope: newRope, ball: newBall, color: cfg.color, frozen: 0, frozenX: 0, frozenY: 0, agitation: 0 });
   }
 }
 (window as any).__yarnCursorAddBall = addBall;
@@ -285,7 +290,14 @@ function animate(time: number) {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
   if (shouldShowCursor()) {
-    for (const entry of ropes) entry.rope.update(mouseX, mouseY, dt);
+    const decay = agitationDecay(dt);
+    for (const entry of ropes) {
+      entry.rope.update(mouseX, mouseY, dt);
+      // Verlet carries velocity as the step just taken, so it needs the delta
+      const last = entry.rope.points[entry.rope.points.length - 1];
+      const speed = Math.hypot(last.x - last.prevX, last.y - last.prevY) / Math.max(dt, 1 / 240);
+      entry.agitation = Math.max(speed, entry.agitation * decay);
+    }
     // Re-pin webbed and frozen points after the solver has run, before anything
     // is drawn
     tickFreezes(dt);
@@ -392,7 +404,7 @@ function init() {
   // Primary rope + ball
   const primaryRope = new VerletRope(mouseX, mouseY);
   const primaryBall = new YarnBall();
-  ropes = [{ rope: primaryRope, ball: primaryBall, color: "#ff6b6b", frozen: 0, frozenX: 0, frozenY: 0 }];
+  ropes = [{ rope: primaryRope, ball: primaryBall, color: "#ff6b6b", frozen: 0, frozenX: 0, frozenY: 0, agitation: 0 }];
 
   window.addEventListener("resize", resize);
   document.addEventListener("mousemove", onMouseMove);

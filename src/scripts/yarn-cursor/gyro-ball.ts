@@ -9,6 +9,24 @@ export const GYRO_BALL_RADIUS = 14;
 
 const TRAIL_LENGTH = 20;
 
+/**
+ * How fast `agitation` forgets a peak. A shaken ball reverses direction several
+ * times a second, so its instantaneous speed keeps dipping through zero — one
+ * of those dips would otherwise be enough to sneak a hit past a phase shield.
+ * Holding the recent peak for a moment is what makes "out of control" a state
+ * rather than a coincidence of which frame the collision landed on.
+ *
+ * Short, because the speed it is compared against is low: the ball has to be
+ * able to calm down within about a second of the player easing off, or a
+ * phased monster would be unhittable for anyone who ever moved quickly.
+ */
+const AGITATION_HALF_LIFE = 0.3;
+
+/** Decay factor for a peak held over `dt` seconds. Shared with the rope balls. */
+export function agitationDecay(dt: number): number {
+  return Math.pow(0.5, dt / AGITATION_HALF_LIFE);
+}
+
 interface TrailPoint {
   x: number;
   y: number;
@@ -34,6 +52,8 @@ export class GyroBall {
   private gravityScale: number;
   /** Seconds left held fast by silk — see freeze(). */
   freezeLeft = 0;
+  /** Recent peak speed in px/s — see AGITATION_HALF_LIFE. */
+  agitation = 0;
 
   get radius(): number {
     return this.visual.radius;
@@ -69,6 +89,7 @@ export class GyroBall {
     const speed = 200 + Math.random() * 150;
     this.vx = Math.cos(angle) * speed;
     this.vy = Math.sin(angle) * speed;
+    this.agitation = 0;
     this.trailHead = 0;
     this.trailCount = 0;
   }
@@ -110,6 +131,7 @@ export class GyroBall {
       // Tilting while stuck must not bank up a catapult for when it wears off
       this.vx = 0; this.vy = 0;
       this.flickX = 0; this.flickY = 0;
+      this.agitation = 0;
       return;
     }
 
@@ -128,6 +150,11 @@ export class GyroBall {
       this.vx = (this.vx / spd) * MAX_SPEED;
       this.vy = (this.vy / spd) * MAX_SPEED;
     }
+
+    this.agitation = Math.max(
+      Math.hypot(this.vx, this.vy),
+      this.agitation * agitationDecay(dt),
+    );
 
     this.x += this.vx * dt;
     this.y += this.vy * dt;

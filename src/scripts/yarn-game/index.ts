@@ -219,20 +219,21 @@ function setGameOverVisuals(on: boolean) {
   }
 }
 
-function getAllBalls(): Array<{ x: number; y: number; radius: number }> {
+function getAllBalls(): Array<{ x: number; y: number; radius: number; agitation: number }> {
   // getAllBallPositions already returns radius with bonus applied (YarnBall.radius getter)
   const getAllPositions = (window as any).__yarnCursorGetAllBallPositions;
   if (getAllPositions) {
     const balls = getAllPositions();
     if (balls.length > 0) return balls;
   }
-  // Fallback to single ball (old API without bonus awareness)
+  // Fallback to single ball (old API without bonus or agitation awareness). A
+  // zero reads as a controlled touch, so the fallback never phases through.
   const bonus = upgrades ? upgrades.getBallRadiusBonus() : 0;
   const getBallPos = (window as any).__yarnCursorGetBallPos;
   if (!getBallPos) return [];
   const pos = getBallPos();
   if (!pos) return [];
-  return [{ x: pos.x, y: pos.y, radius: YARN_BALL_RADIUS + bonus }];
+  return [{ x: pos.x, y: pos.y, radius: YARN_BALL_RADIUS + bonus, agitation: 0 }];
 }
 
 function checkYarnBallVsMonsters() {
@@ -242,7 +243,7 @@ function checkYarnBallVsMonsters() {
 
   let totalHits = 0;
   for (const ball of balls) {
-    totalHits += monsters.checkYarnBallHit(ball.x, ball.y, ball.radius);
+    totalHits += monsters.checkYarnBallHit(ball.x, ball.y, ball.radius, ball.agitation);
     monsters.checkProjectileHit(ball.x, ball.y, ball.radius);
   }
   if (totalHits > 0 && !monsters.engaged) {

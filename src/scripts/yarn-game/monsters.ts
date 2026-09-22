@@ -40,8 +40,21 @@ const SHIELD_GAP_PROBE = 0.5;
 const SHIELD_GAP_MARGIN = 30;
 /** Granularity of the search for the smallest workable rotation. */
 const SHIELD_TURN_STEP = Math.PI / 16;
-/** How fast the plates swing to a new facing, rad/s — visible, not instant. */
-const SHIELD_TURN_RATE = 5;
+/**
+ * How fast the plates swing to a new facing, rad/s. Slow: the gap is a target
+ * the player is steering into over a second or two, and a ring that can spin
+ * out from under the ball faster than the ball can follow is not a puzzle.
+ */
+const SHIELD_TURN_RATE = 1.2;
+/**
+ * Below this distance to its target a monster stops re-aiming its plates.
+ *
+ * An eating moth sits a handful of pixels from the point it is chewing and
+ * jitters around it, so the direction to that point is noise — recomputed
+ * every frame it sends the whole ring spinning, which is exactly when the
+ * player is trying to line up on the gap.
+ */
+const SHIELD_FACING_MIN_DIST = 70;
 
 const SNARL_FIRST_LEVEL = 11;
 const SNARL_MAX_ALIVE = 2; // from level 12 on; level 11 raises it to teach
@@ -136,6 +149,58 @@ const QUEEN_COLORS = {
   strandHot: "#f7dc6f", // the thread in the last moments before she travels it
   ring: "#9b59b6", // phase 2 ring-burst projectiles
 };
+
+// ── Phase shields (level 7+) ──
+// A Dune body shield: only a slow blade gets in. A yarn ball arriving faster
+// than the speed limit below slides straight through without touching it,
+// and is told so. Moths, shooters and spiders can be carrying one, and it is
+// visible from across the screen, so it never turns a fair hit into a surprise
+// — it only asks the player to slow down for that particular monster.
+//
+// Bosses are exempt because their fights already dictate when they can be hit,
+// and plated moths because stacking a second "not like that" on the one enemy
+// whose whole lesson is *where* to hit it makes both rules harder to read.
+//
+// It exists because flailing was a strategy: on a phone, shaking the device
+// hard enough turns the ball into a screen-wide blur that kills everything it
+// sweeps past, with no aiming at all. Contact damage alone can't tell that
+// apart from skill; contact speed can.
+const PHASE_FIRST_LEVEL = 7;
+/**
+ * Agitation (recent peak speed, px/s) above which a phased monster is
+ * untouchable. Low on purpose: a phase shield should demand that the ball be
+ * walked into it, not merely that the player is not flailing. On a phone that
+ * is a lean of about 25° or less; anything steeper is the ball falling rather
+ * than being aimed. Going much below this stops meaning "slow" and starts
+ * meaning "untouchable" — a tilt ball only creeps while the phone is nearly
+ * flat, and at that point it barely moves at all. The pointer limit is looser
+ * because a mouse can drag its ball across the screen quickly and still be
+ * placing it deliberately.
+ */
+const PHASE_SPEED_LIMIT_TILT = 800;
+const PHASE_SPEED_LIMIT_POINTER = 1600;
+const PHASE_BASE_CHANCE = 0.25;
+const PHASE_CHANCE_RAMP = 0.03; // per level past the first
+const PHASE_MAX_CHANCE = 0.45;
+/** Ripple duration, and the cooldown on repeating the callout. */
+const PHASE_FLASH_TIME = 0.5;
+const PHASE_COLOR = "#00cec9";
+
+/**
+ * Hurtbox radius as a multiple of a monster's drawn size. The ball's own radius
+ * is added on top at the collision (see checkYarnBallHit), so this is the point
+ * the ball's *edge* has to reach, not its centre.
+ *
+ * On a phone it is the sprite itself: a tilt ball goes exactly where it is, so
+ * any slack shows up as kills landing in empty space beside the monster — and
+ * a phased monster read as if its field were the target, since the old margin
+ * fired before the ball had entered the field at all. At 1.0 the ball has to
+ * be inside the field and touching the body.
+ *
+ * The desktop margin stays generous because the rope ball lags its cursor by a
+ * fair distance, and aiming a thing that trails you needs the slack.
+ */
+const HIT_RADIUS_FACTOR = window.matchMedia("(hover: none)").matches ? 1.0 : 2.0;
 
 const MAX_CARD_HP = 5;
 const DAMAGE_PER_SECOND = 0.5;
@@ -349,6 +414,13 @@ interface SilkKnot {
   total: number;
 }
 
+/** Short-lived text over the action, e.g. the phase shield's "Too fast!". */
+interface FloatText {
+  x: number; y: number;
+  life: number; total: number;
+  text: string; color: string;
+}
+
 interface Monster {
   x: number; y: number; vx: number; vy: number;
   targetT: number; targetX: number; targetY: number;
@@ -368,6 +440,8 @@ interface Monster {
   shieldFlash: number[];
   /** Absolute angle segment 0 points at — see shieldFacing(). */
   shieldAngle: number;
+  /** Last facing taken from a meaningful distance — see SHIELD_FACING_MIN_DIST. */
+  shieldNatural: number;
   isBoss: boolean;
   bossOpenSegment: number;
   bossInvulnTimer: number;
@@ -394,6 +468,10 @@ interface Monster {
   queenDestY: number;
   queenRingTimer: number;
   queenAddTimer: number;
+  /** Carries a phase shield — see PHASE_FIRST_LEVEL. Never set on a boss. */
+  phased: boolean;
+  /** >0 right after something phased through, for the ripple and the callout. */
+  phaseFlash: number;
 }
 
 interface SpawnTarget { x: number; y: number; t: number; el: Element }
@@ -419,6 +497,37 @@ const OFFSCREEN_MARGIN = 14;
 const OFFSCREEN_DOT = 5;
 /** Beyond this distance past the edge a marker stops fading further out. */
 const OFFSCREEN_FADE_DIST = 600;
+
+/**
+ * Deterministic 0..1 noise from two numbers — a stand-in for Math.random()
+ * that gives the same answer for the same inputs, so a glitch can be held for
+ * a few frames instead of re-rolling every one of them.
+ */
+function hash01(a: number, b: number): number {
+  const v = Math.sin(a * 12.9898 + b * 78.233) * 43758.5453;
+  return v - Math.floor(v);
+}
+
+const invertedColors = new Map<string, string>();
+
+/**
+ * The photographic negative of a #rrggbb colour, memoised — the palettes are a
+ * handful of constants, so this fills up once and never grows.
+ *
+ * Used to paint a phased monster in negative. Its own colours are what the
+ * player already knows a moth or a spider by, so turning them inside out marks
+ * the creature itself as wrong, which no ring drawn around it can do as loudly.
+ */
+function invertHex(hex: string): string {
+  const cached = invertedColors.get(hex);
+  if (cached) return cached;
+  const m = /^#([0-9a-f]{6})$/i.exec(hex);
+  const out = m
+    ? `#${(0xffffff ^ parseInt(m[1], 16)).toString(16).padStart(6, "0")}`
+    : hex;
+  invertedColors.set(hex, out);
+  return out;
+}
 
 /** Palette a monster bursts into when it dies. */
 function deathColors(m: Monster): { body: string; eye: string; trim: string } {
@@ -455,11 +564,14 @@ function createMonster(
 ): Monster {
   const size = over.size ?? 24;
   const hp = over.hp ?? 1;
+  // Starts at its natural facing so the ring is never briefly open in the
+  // wrong direction on the way in — see shieldFacing().
+  const facing = target && kind !== "boss" ? Math.atan2(target.y - y, target.x - x) : 0;
   return {
     x, y, vx: 0, vy: 0,
     targetT: target?.t ?? 0, targetX: target?.x ?? x, targetY: target?.y ?? y,
     targetEl: target?.el ?? null,
-    size, hitRadius: size * 2.0,
+    size, hitRadius: size * HIT_RADIUS_FACTOR,
     colorIdx: 0, wingPhase: Math.random() * Math.PI * 2,
     alive: true, spawnAnim: 0, eatingTimer: 0,
     hp, maxHp: hp, isBig: false, isHuge: false, flashTimer: 0,
@@ -467,9 +579,7 @@ function createMonster(
     kind, scoreValue: 1,
     isShooter: kind === "shooter", orbitAngle: 0, shootCooldown: 0,
     isShielded: kind === "shielded", shieldSegments: 0, shieldFlash: new Array(8).fill(0),
-    // Starts at its natural facing so the ring is never briefly open in the
-    // wrong direction on the way in — see shieldFacing().
-    shieldAngle: target && kind !== "boss" ? Math.atan2(target.y - y, target.x - x) : 0,
+    shieldAngle: facing, shieldNatural: facing,
     isBoss: kind === "boss" || kind === "queen",
     bossOpenSegment: 0, bossInvulnTimer: 0, bossAttackTimer: 0,
     bossPhase2Cycle: 0, bossBurstsFired: 0,
@@ -481,6 +591,7 @@ function createMonster(
     queenBlinkTimer: 0, queenTelegraph: 0, queenTelegraphMax: QUEEN_BLINK_TELEGRAPH,
     queenDestX: x, queenDestY: y,
     queenRingTimer: 0, queenAddTimer: 0,
+    phased: false, phaseFlash: 0,
     ...over,
   };
 }
@@ -503,16 +614,25 @@ interface LevelRule {
   minSpawnInterval?: number;
   /** Overrides the usual 2-spider cap. */
   maxSnarls?: number;
+  /** Overrides the level's phase-shield rate — see phaseChance(). */
+  phaseChance?: number;
   banner?: string;
 }
 
 const LEVEL_RULES: Record<number, LevelRule> = {
   5: { banner: "Ranged enemies spotted!" },
   6: { banner: "Bigger creatures approaching..." },
+  // Phase shields debut here. Plated moths cannot carry one, so the level no
+  // longer spawns them exclusively — without a few ordinary monsters mixed in
+  // there would be nothing here for a field to sit on, and the debut would
+  // silently slide to level 8. Those few are heavily phased to make up for it.
   7: {
-    featured: "shielded", maxMonsters: 3, maxMonstersMobile: 2, minSpawnInterval: 3,
+    featured: "shielded", featuredChance: 0.65,
+    maxMonsters: 3, maxMonstersMobile: 2, minSpawnInterval: 3,
+    phaseChance: 0.6,
     banner: "Shielded foes! Hit them from behind!",
   },
+  8: { phaseChance: 0.55, banner: "Shimmering hides — slow down to cut through!" },
   10: { boss: "boss", maxMonsters: 1, minSpawnInterval: 1, banner: "BOSS! Find the opening in its shield!" },
   // Spider debut. Mostly spiders so the mechanic gets room to teach itself, but
   // a couple of moths still chew on the cards — that is what makes being pinned
@@ -520,6 +640,8 @@ const LEVEL_RULES: Record<number, LevelRule> = {
   11: {
     featured: "snarl", featuredChance: 0.8, maxSnarls: 3,
     maxMonsters: 5, maxMonstersMobile: 3, minSpawnInterval: 1.4,
+    // Being pinned is enough to think about for one level
+    phaseChance: 0.15,
     banner: "Spiders! They pin your yarn — shake them off!",
   },
   15: { boss: "queen", maxMonsters: 1, minSpawnInterval: 1, banner: "THE LOOM QUEEN! Stay off her silk lines!" },
@@ -615,18 +737,36 @@ function shieldGapReachable(m: Monster, facing: number): boolean {
 }
 
 /**
- * The facing a shielded monster wants: its natural one — plates toward the card
- * it is chewing, or unrotated for the boss, whose opening moves on its own —
- * turned off it by the smallest amount that keeps the gap on screen.
+ * Where a shielded monster would point its plates if the viewport were not in
+ * the way: at the card it is chewing, or nowhere in particular for the boss,
+ * whose opening moves on its own. Frozen once it gets close enough to be
+ * eating, per SHIELD_FACING_MIN_DIST.
+ */
+function naturalFacing(m: Monster): number {
+  if (m.kind === "boss" || !m.targetEl) return 0;
+  const dx = m.targetX - m.x;
+  const dy = m.targetY - m.y;
+  if (dx * dx + dy * dy > SHIELD_FACING_MIN_DIST * SHIELD_FACING_MIN_DIST) {
+    m.shieldNatural = Math.atan2(dy, dx);
+  }
+  return m.shieldNatural;
+}
+
+/**
+ * The facing a shielded monster wants: its natural one, turned off it by the
+ * smallest amount that keeps the gap on screen.
  *
  * Returns the natural angle unchanged when no rotation helps: that means the
  * monster itself is off-screen, still on its way in, and there is nothing to keep
  * reachable yet.
  */
 function shieldFacing(m: Monster): number {
-  const natural = m.kind === "boss" || !m.targetEl
-    ? 0 : Math.atan2(m.targetY - m.y, m.targetX - m.x);
+  const natural = naturalFacing(m);
   if (shieldGapReachable(m, natural)) return natural;
+  // Whatever rotation is already applied wins while it still works. Searching
+  // from scratch every frame picks +off on one frame and -off on the next as
+  // the monster drifts a pixel, and the ring wags between the two.
+  if (shieldGapReachable(m, m.shieldAngle)) return m.shieldAngle;
   const steps = Math.ceil(Math.PI / SHIELD_TURN_STEP);
   for (let i = 1; i <= steps; i++) {
     const off = i * SHIELD_TURN_STEP;
@@ -694,6 +834,9 @@ export class MonsterManager {
   paused: boolean = false;
   /** Yarn currently stuck to one of the Loom Queen's threads. */
   private silkKnots: SilkKnot[] = [];
+  private floatTexts: FloatText[] = [];
+  /** Scratch list for draw ordering, reused every frame. */
+  private drawOrder: Monster[] = [];
   private mobile: boolean;
   private levelThresholds = [
     5, 15, 30, 50, 80, 120, 170, 230, 300,  // levels 2–10
@@ -827,9 +970,32 @@ export class MonsterManager {
     }
   }
 
+  /**
+   * How often a monster spawning right now is carrying a phase shield. Ramps
+   * gently with the level, except where a level says otherwise: a level that is
+   * busy teaching something else of its own turns it down, and level 8 — the
+   * one that introduces it properly — turns it up.
+   */
+  private phaseChance(): number {
+    if (this.level < PHASE_FIRST_LEVEL) return 0;
+    const override = LEVEL_RULES[this.level]?.phaseChance;
+    if (override !== undefined) return override;
+    return Math.min(
+      PHASE_MAX_CHANCE,
+      PHASE_BASE_CHANCE + (this.level - PHASE_FIRST_LEVEL) * PHASE_CHANCE_RAMP,
+    );
+  }
+
+  /** The one way a monster enters the world. */
+  private addMonster(m: Monster) {
+    const canPhase = !m.isBoss && !m.isShielded;
+    if (canPhase && Math.random() < this.phaseChance()) m.phased = true;
+    this.monsters.push(m);
+  }
+
   private spawnShielded(target: SpawnTarget, at?: { x: number; y: number }) {
     const pos = at ?? this.spawnOffScreen();
-    this.monsters.push(createMonster("shielded", pos.x, pos.y, target, {
+    this.addMonster(createMonster("shielded", pos.x, pos.y, target, {
       size: 38, hp: 1, isBig: true, scoreValue: SHIELDED_SCORE,
       colorIdx: Math.floor(Math.random() * MONSTER_COLORS.length),
       shieldSegments: [1, 3, 5, 7][Math.floor(Math.random() * 4)],
@@ -838,7 +1004,7 @@ export class MonsterManager {
 
   private spawnShooter(target: SpawnTarget, at?: { x: number; y: number }) {
     const pos = at ?? this.spawnOffScreen();
-    this.monsters.push(createMonster("shooter", pos.x, pos.y, target, {
+    this.addMonster(createMonster("shooter", pos.x, pos.y, target, {
       size: 34, hp: 2,
       colorIdx: Math.floor(Math.random() * SHOOTER_COLORS.length),
       orbitAngle: Math.random() * Math.PI * 2,
@@ -848,7 +1014,7 @@ export class MonsterManager {
 
   private spawnSnarl(target: SpawnTarget, at?: { x: number; y: number }) {
     const pos = at ?? this.spawnOffScreen();
-    this.monsters.push(createMonster("snarl", pos.x, pos.y, target, {
+    this.addMonster(createMonster("snarl", pos.x, pos.y, target, {
       size: 22, hp: 1, scoreValue: SNARL_SCORE,
       colorIdx: Math.floor(Math.random() * SNARL_COLORS.length),
     }));
@@ -867,7 +1033,7 @@ export class MonsterManager {
 
   private spawnBoss(target: SpawnTarget) {
     const pos = this.spawnOffScreen();
-    this.monsters.push(createMonster("boss", pos.x, pos.y, target, {
+    this.addMonster(createMonster("boss", pos.x, pos.y, target, {
       size: BOSS_SIZE, hp: BOSS_HP, isBig: true, isHuge: true, scoreValue: BOSS_SCORE,
       colorIdx: Math.floor(Math.random() * BOSS_COLORS.length),
       bossOpenSegment: Math.floor(Math.random() * 8),
@@ -877,7 +1043,7 @@ export class MonsterManager {
 
   private spawnQueen(target: SpawnTarget) {
     const pos = this.spawnOffScreen();
-    this.monsters.push(createMonster("queen", pos.x, pos.y, target, {
+    this.addMonster(createMonster("queen", pos.x, pos.y, target, {
       size: QUEEN_SIZE, hp: QUEEN_HP, isBig: true, isHuge: true, scoreValue: QUEEN_SCORE,
       // Just her body. The yarn ball trails its cursor by a fair margin, so a
       // roomier hurtbox would let one lazy circling motion keep landing hits
@@ -960,10 +1126,20 @@ export class MonsterManager {
     }
 
     const pos = at ?? this.spawnOffScreen();
-    this.monsters.push(createMonster("moth", pos.x, pos.y, target, {
+    this.addMonster(createMonster("moth", pos.x, pos.y, target, {
       size, hp, isBig: isBig || isHuge, isHuge,
       colorIdx: Math.floor(Math.random() * MONSTER_COLORS.length),
     }));
+  }
+
+  /**
+   * A word over the action. Capped, because a ball sweeping a crowd of phased
+   * monsters would otherwise stack a wall of text over the whole fight.
+   */
+  private addFloatText(text: string, x: number, y: number, color: string) {
+    const total = 0.9;
+    this.floatTexts.push({ x, y, life: total, total, text, color });
+    if (this.floatTexts.length > 4) this.floatTexts.shift();
   }
 
   /** Drop any web this monster is holding on the player's yarn. */
@@ -1020,7 +1196,9 @@ export class MonsterManager {
     }
   }
 
-  checkYarnBallHit(ballX: number, ballY: number, ballRadius: number): number {
+  /** `agitation` is recent peak speed in px/s; 0 when the caller cannot supply it. */
+  checkYarnBallHit(ballX: number, ballY: number, ballRadius: number, agitation: number = 0): number {
+    const speedLimit = this.mobile ? PHASE_SPEED_LIMIT_TILT : PHASE_SPEED_LIMIT_POINTER;
     let hits = 0;
     for (const m of this.monsters) {
       if (!m.alive) continue;
@@ -1036,6 +1214,16 @@ export class MonsterManager {
         const dist = Math.sqrt(distSq);
         const nx = dist > 0 ? dx / dist : 0;
         const ny = dist > 0 ? dy / dist : -1;
+
+        // Phase shield: too fast and the ball simply isn't there. No damage, no
+        // bounce, and it does not count as a hit — the swing never happened.
+        if (m.phased && agitation > speedLimit) {
+          if (m.phaseFlash <= 0) {
+            m.phaseFlash = PHASE_FLASH_TIME;
+            this.addFloatText("Too fast!", m.x, m.y - m.size * 1.4, PHASE_COLOR);
+          }
+          continue;
+        }
 
         // Boss shield check: 7/8 segments active, 1 open
         if (m.kind === "boss") {
@@ -1614,6 +1802,7 @@ export class MonsterManager {
       for (const p of this.projectiles) { p.y -= scrollDelta; }
       for (const p of this.particles) { p.y -= scrollDelta; }
       for (const p of this.eatParticles) { p.y -= scrollDelta; }
+      for (const f of this.floatTexts) { f.y -= scrollDelta; }
     }
     prevScrollY = scrollY;
 
@@ -1683,6 +1872,7 @@ export class MonsterManager {
       m.spawnAnim = Math.min(1, m.spawnAnim + dt * 3);
       m.wingPhase += dt * (m.isBoss ? 5 : m.isShooter ? 3 : m.isBig ? 10 : 14);
       if (m.flashTimer > 0) m.flashTimer -= dt;
+      if (m.phaseFlash > 0) m.phaseFlash -= dt;
       if (m.isShielded || m.isBoss) for (let i = 0; i < 8; i++) if (m.shieldFlash[i] > 0) m.shieldFlash[i] -= dt;
       if (m.kind === "boss" || (m.isShielded && m.shieldSegments > 0)) {
         m.shieldAngle = turnToward(m.shieldAngle, shieldFacing(m), SHIELD_TURN_RATE * dt);
@@ -1996,6 +2186,8 @@ export class MonsterManager {
     // Mirrors the freeze timer the yarn cursor is running on the ball itself
     for (const k of this.silkKnots) k.left -= dt;
     compact(this.silkKnots, k => k.left > 0);
+    for (const f of this.floatTexts) f.life -= dt;
+    compact(this.floatTexts, f => f.life > 0);
   }
 
   draw(ctx: CanvasRenderingContext2D, time: number) {
@@ -2114,12 +2306,23 @@ export class MonsterManager {
     }
 
     // ── Draw monsters ──
-    for (const m of this.monsters) {
+    // Phased ones go first: their effect works by rubbing pixels off the
+    // canvas, so anything already drawn beneath them would be rubbed off too
+    // and a perfectly solid monster standing behind one would start ghosting.
+    this.drawOrder.length = 0;
+    for (const m of this.monsters) if (m.alive) this.drawOrder.push(m);
+    this.drawOrder.sort((a, b) => Number(b.phased) - Number(a.phased));
+
+    for (const m of this.drawOrder) {
       if (!m.alive) continue;
       const s = m.size * m.spawnAnim;
       if (s < 0.5) continue;
 
       ctx.save(); ctx.translate(m.x, m.y);
+      // Every colour of the creature itself goes through this, so a phased one
+      // is drawn in negative. Telegraphs and meters (a spider's web, its strain
+      // bar) deliberately do not — those belong to the game, not the monster.
+      const col = (hex: string) => (m.phased ? invertHex(hex) : hex);
       if (m.flashTimer > 0 && Math.sin(m.flashTimer * 40) > 0) ctx.globalAlpha = 0.5;
       // Boss invulnerability pulsing
       if (m.isBoss && m.bossInvulnTimer > 0) {
@@ -2282,7 +2485,7 @@ export class MonsterManager {
         }
 
         // Legs
-        ctx.fillStyle = c.leg;
+        ctx.fillStyle = col(c.leg);
         for (let side = -1; side <= 1; side += 2) {
           for (let i = 0; i < 4; i++) {
             const a = -0.8 + i * 0.5 + Math.sin(m.wingPhase * 1.5 + i) * 0.15;
@@ -2295,10 +2498,10 @@ export class MonsterManager {
           }
         }
         // Body
-        ctx.fillStyle = c.body;
+        ctx.fillStyle = col(c.body);
         px(-1.5 * p, -0.4 * p, 3 * p, 3.2 * p);
         px(-1 * p, -2.2 * p, 2 * p, 1.9 * p);
-        ctx.fillStyle = c.eye;
+        ctx.fillStyle = col(c.eye);
         px(-0.85 * p, -1.8 * p, 0.6 * p, 0.6 * p);
         px(0.25 * p, -1.8 * p, 0.6 * p, 0.6 * p);
 
@@ -2516,7 +2719,7 @@ export class MonsterManager {
         // Charge glow (pixel squares around body when about to fire)
         const chargeT = 1 - Math.min(1, m.shootCooldown / SHOOTER_CHARGE_TIME);
         if (chargeT > 0) {
-          ctx.fillStyle = sc.ring;
+          ctx.fillStyle = col(sc.ring);
           ctx.globalAlpha = chargeT * 0.5;
           const glow = Math.floor(chargeT * 3) + 1;
           for (let i = 0; i < 4; i++) {
@@ -2528,17 +2731,17 @@ export class MonsterManager {
         }
 
         // Body: blocky hexagonal shape
-        ctx.fillStyle = sc.body;
+        ctx.fillStyle = col(sc.body);
         px(-2.5 * p, -1.5 * p + bob, 5 * p, 3 * p); // wide center
         px(-1.5 * p, -2.5 * p + bob, 3 * p, 1 * p); // top
         px(-1.5 * p, 1.5 * p + bob, 3 * p, 1 * p);  // bottom
 
         // Dark inner
-        ctx.fillStyle = "#1a1a2e";
+        ctx.fillStyle = col("#1a1a2e");
         px(-1.5 * p, -1 * p + bob, 3 * p, 2.5 * p);
 
         // Eye white
-        ctx.fillStyle = "#ecf0f1";
+        ctx.fillStyle = col("#ecf0f1");
         px(-1 * p, -0.5 * p + bob, 2 * p, 1.5 * p);
 
         // Pupil — tracks target
@@ -2552,21 +2755,21 @@ export class MonsterManager {
           pupilDx = Math.cos(angle) * p * 0.4;
           pupilDy = Math.sin(angle) * p * 0.4;
         }
-        ctx.fillStyle = sc.eye;
+        ctx.fillStyle = col(sc.eye);
         px(-0.5 * p + pupilDx, -0.2 * p + bob + pupilDy, 1 * p, 1 * p);
         // Highlight
-        ctx.fillStyle = "#ecf0f1";
+        ctx.fillStyle = col("#ecf0f1");
         px(-0.5 * p + pupilDx + p * 0.15, -0.2 * p + bob + pupilDy + p * 0.1, p * 0.3, p * 0.3);
 
         // "Legs" / antenna — small pixel appendages
-        ctx.fillStyle = sc.ring;
+        ctx.fillStyle = col(sc.ring);
         px(-3 * p, -0.5 * p + bob, 0.8 * p, 0.8 * p); // left
         px(2.2 * p, -0.5 * p + bob, 0.8 * p, 0.8 * p); // right
         px(-0.4 * p, 2.5 * p + bob, 0.8 * p, 0.8 * p); // bottom barrel
 
         // HP pips above
         if (m.hp > 1) {
-          ctx.fillStyle = sc.ring;
+          ctx.fillStyle = col(sc.ring);
           for (let i = 0; i < m.hp; i++) {
             const pipX = -((m.hp - 1) * p * 0.8) / 2 + i * p * 0.8;
             px(pipX - p * 0.3, -3.5 * p + bob, p * 0.6, p * 0.5);
@@ -2577,41 +2780,123 @@ export class MonsterManager {
         const c = MONSTER_COLORS[m.colorIdx];
         const p = s / 7;
         const wingUp = Math.sin(m.wingPhase) * 0.6;
-        ctx.fillStyle = c.wing;
+        ctx.fillStyle = col(c.wing);
         px(-4.5 * p, (-1 + wingUp) * p, 2.5 * p, 3.5 * p);
         px(-3.5 * p, (-2.5 + wingUp) * p, 1.5 * p, 1.5 * p);
         px(2 * p, (-1 + wingUp) * p, 2.5 * p, 3.5 * p);
         px(2 * p, (-2.5 + wingUp) * p, 1.5 * p, 1.5 * p);
-        ctx.fillStyle = c.body;
+        ctx.fillStyle = col(c.body);
         px(-2.5 * p, -2.5 * p, 5 * p, 6 * p);
         px(-1.5 * p, -3.5 * p, 3 * p, 1 * p);
         px(-1.5 * p, 3.5 * p, 3 * p, 1 * p);
 
         if (m.isBig && m.hp > 1) {
-          ctx.fillStyle = "#e74c3c";
+          ctx.fillStyle = col("#e74c3c");
           for (let i = 0; i < m.hp; i++) {
             const pipX = -((m.hp - 1) * p * 0.8) / 2 + i * p * 0.8;
             ctx.fillRect(pipX - p * 0.3, -4 * p, p * 0.6, p * 0.5);
           }
         }
 
-        ctx.fillStyle = c.eye;
+        ctx.fillStyle = col(c.eye);
         px(-1.5 * p, -1.5 * p, 1.2 * p, 1.2 * p);
         px(0.5 * p, -1.5 * p, 1.2 * p, 1.2 * p);
-        ctx.fillStyle = "#2c3e50";
+        ctx.fillStyle = col("#2c3e50");
         px(-1.2 * p, 1 * p, 2.4 * p, 1.2 * p);
-        ctx.fillStyle = "#ecf0f1";
+        ctx.fillStyle = col("#ecf0f1");
         const eating = m.eatingTimer > 0.3;
         const jawOpen = eating ? Math.abs(Math.sin(m.eatingTimer * 12)) * p * 1.2 : 0;
         px(-0.8 * p, 1 * p + jawOpen, 0.6 * p, 0.6 * p);
         px(0.3 * p, 1 * p + jawOpen, 0.6 * p, 0.6 * p);
-        ctx.fillStyle = c.wing; ctx.globalAlpha = 0.35;
+        ctx.fillStyle = col(c.wing); ctx.globalAlpha = 0.35;
         for (let i = 0; i < 4; i++) {
           const tx = Math.sin(time * 3.5 + i * 1.8 + m.wingPhase) * s * 0.9;
           const ty = Math.cos(time * 2.5 + i * 2.5 + m.wingPhase) * s * 0.4 + s;
           ctx.fillRect(tx - p * 0.6, ty - p * 0.6, p * 1.2, p * 1.2);
         }
       }
+
+      // ── Phase: a field that is losing its grip on the monster ──
+      // A Dune body shield: a hard-edged box of chunky blocks standing off the
+      // sprite, restruck several times a second with blocks missing, jittering
+      // and occasionally tearing into glitch bars. It is a box rather than a
+      // ring because a circle reads as a bubble you bounce off, and a field
+      // that cannot hold its own outline reads as one you can get through.
+      //
+      // The body is only slightly thinned, just enough to sit oddly behind its
+      // own field. That happens in a single `destination-out` pass at the end,
+      // with everything else laid down before it: switching composite mode
+      // flushes the renderer's batch, so once per phased monster is the budget.
+      if (m.phased) {
+        const flash = Math.max(0, m.phaseFlash) / PHASE_FLASH_TIME;
+        const halfW = s * 0.95 + flash * s * 0.25;
+        const halfH = s * 1.05 + flash * s * 0.25;
+        const blk = Math.max(2.5, s * 0.17);
+        // The field re-strikes at this rate; every mark holds until it does
+        const tick = Math.floor(time * 9);
+
+        const mark = (x: number, y: number, seed: number) => {
+          const r = hash01(seed, tick);
+          if (r < 0.28 && flash === 0) return; // gaps, so it is never a solid box
+          ctx.globalAlpha = Math.min(1, 0.5 + r * 0.4 + flash * 0.5);
+          ctx.fillStyle = r > 0.82 || flash > 0 ? "#ffffff" : PHASE_COLOR;
+          const jit = (hash01(seed + 7, tick) - 0.5) * blk;
+          px(x - blk / 2 + jit, y - blk / 2, blk, blk);
+        };
+
+        const cols = 5, rows = 4;
+        for (let i = 0; i < cols; i++) {
+          const x = -halfW + (i / (cols - 1)) * halfW * 2;
+          mark(x, -halfH, i);
+          mark(x, halfH, i + cols);
+        }
+        for (let j = 1; j < rows - 1; j++) {
+          const y = -halfH + (j / (rows - 1)) * halfH * 2;
+          mark(-halfW, y, j + cols * 2);
+          mark(halfW, y, j + cols * 2 + rows);
+        }
+
+        // Tears: the field slipping sideways for a moment
+        ctx.fillStyle = PHASE_COLOR;
+        for (let i = 0; i < 2; i++) {
+          const g = hash01(i * 37 + 3, tick);
+          if (g < 0.55) continue;
+          ctx.globalAlpha = 0.45 + flash * 0.45;
+          const gy = (hash01(i * 37 + 11, tick) - 0.5) * halfH * 2;
+          const gw = halfW * (0.7 + g * 0.9);
+          const gx = (hash01(i * 37 + 19, tick) - 0.5) * s * 0.6;
+          ctx.fillRect(gx - gw / 2, gy, gw, Math.max(1.5, s * 0.05));
+        }
+
+        ctx.globalCompositeOperation = "destination-out";
+        ctx.fillStyle = "#000";
+        ctx.globalAlpha = 0.15 + flash * 0.25;
+        ctx.fillRect(-halfW, -halfH, halfW * 2, halfH * 2);
+        // composite mode and alpha are both put back by the restore() below
+      }
+      ctx.restore();
+    }
+
+    // ── Floating callouts (the phase shield's "Too fast!") ──
+    // Kept inside the viewport: the monster it belongs to may be hugging an
+    // edge, and a callout half off the screen is worse than none.
+    for (const f of this.floatTexts) {
+      const t = f.life / f.total;
+      const x = Math.min(window.innerWidth - 60, Math.max(60, f.x));
+      const y = Math.max(24, f.y - (1 - t) * 26);
+      ctx.save();
+      ctx.globalAlpha = Math.min(1, t * 2.5);
+      // Grows as it rises, and carries its own outline: it lands on top of a
+      // monster, a card and whatever the page itself is showing.
+      ctx.font = `bold ${Math.round(24 + (1 - t) * 6)}px ${CANVAS_HEADING_FONT}`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.lineWidth = 5;
+      ctx.lineJoin = "round";
+      ctx.strokeStyle = "rgba(255,255,255,0.9)";
+      ctx.strokeText(f.text, x, y);
+      ctx.fillStyle = f.color;
+      ctx.fillText(f.text, x, y);
       ctx.restore();
     }
 
@@ -2695,5 +2980,6 @@ export class MonsterManager {
     this.projectiles = [];
     this.particles = [];
     this.eatParticles = [];
+    this.floatTexts = [];
   }
 }
