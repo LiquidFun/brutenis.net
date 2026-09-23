@@ -21,7 +21,7 @@ const lastUpdated = "21 September 2026";
       Short version: reading this site stores nothing in your browser. The server
       writes the request to a log, with your address shortened first. Playing the
       game stores a few things locally. Only submitting a score to the
-      <a href="/leaderboard">leaderboard</a> creates anything that recognises you
+      <a href="/games/yarn">leaderboard</a> creates anything that recognises you
       on a later visit, and that is a single random number.
     </p>
     <p>
@@ -59,6 +59,12 @@ const lastUpdated = "21 September 2026";
       <li>
         <code>attackers-enabled</code> is whether you turned the game on or off.
         It stays in your browser.
+      </li>
+      <li>
+        <code>yarn-bosses-defeated</code> is the list of bosses you have beaten,
+        which is what the <a href="/games/yarn">yarn game page</a> shows and what
+        keeps the things they unlock unlocked. It stays in your browser and is
+        never sent anywhere.
       </li>
       <li>
         <code>leaderboard-name</code> is the name you last typed into the submit

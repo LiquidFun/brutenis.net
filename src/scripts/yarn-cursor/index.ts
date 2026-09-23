@@ -1,6 +1,6 @@
 import { VerletRope } from "./verlet-rope";
 import { YarnBall } from "./yarn-ball";
-import { drawRope, drawYarnBall } from "./renderer";
+import { drawFlames, drawRope, drawYarnBall } from "./renderer";
 import { GyroBall, agitationDecay } from "./gyro-ball";
 import { WebAnchorManager } from "./web-anchors";
 
@@ -38,6 +38,12 @@ let gyroHintShown = false;
 
 // ── Radius bonus from upgrades ──
 let ballRadiusBonus = 0;
+
+// ── Burning yarn (combo reward — see monsters.ts) ──
+// Purely cosmetic here: the game decides what burning yarn may hit, this only
+// has to make it obvious that it is on.
+let burning = false;
+(window as any).__yarnCursorSetBurning = (value: boolean) => { burning = value; };
 
 // ── Spider webs pinning the yarn (see web-anchors.ts) ──
 const webAnchors = new WebAnchorManager(
@@ -307,6 +313,8 @@ function animate(time: number) {
       const entry = ropes[i];
       const points = entry.rope.getPoints();
       drawRope(ctx, points, entry.color);
+      const tip = points[points.length - 1];
+      if (burning && tip) drawFlames(ctx, tip.x, tip.y, entry.ball.radius, time / 1000);
       drawYarnBall(ctx, entry.ball, points);
     }
   }
@@ -438,8 +446,10 @@ function animateGyro(time: number) {
     // Update and draw all gyro balls (extras behind primary)
     webAnchors.update(dt);
     for (let i = gyroBalls.length - 1; i >= 0; i--) {
-      gyroBalls[i].update(dt, canvas.width, canvas.height);
-      gyroBalls[i].draw(ctx);
+      const gb = gyroBalls[i];
+      gb.update(dt, canvas.width, canvas.height);
+      if (burning) drawFlames(ctx, gb.x, gb.y, gb.radius, time / 1000);
+      gb.draw(ctx);
     }
 
     // Idle hint: check primary ball only

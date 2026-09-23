@@ -1,0 +1,355 @@
+---
+import BaseLayout from "@layouts/BaseLayout.astro";
+import Leaderboard from "@components/Leaderboard.astro";
+import { BOSSES } from "@scripts/yarn-game/boss-progress";
+
+/**
+ * The yarn game's own page: what it is, what you have beaten, what that earned
+ * you, and the board.
+ *
+ * Every boss known to the game gets a card here, plus one trailing card for
+ * whatever comes next. Which cards are shown, and in what state, is decided in
+ * the browser — the trophies live in localStorage, so the server has no idea
+ * who is reading this. Without JS the cabinet reads as all-locked, which is
+ * the honest default rather than a broken one.
+ */
+const PORTRAIT = 132;
+---
+
+<BaseLayout
+  title="Yarn Game"
+  description="The yarn ball game hidden in this site: bosses, unlocks and the leaderboard."
+>
+  <h1 class="text-5xl font-heading font-bold text-yarn-coral mb-4">Yarn Game</h1>
+
+  <p class="font-body text-text-charcoal mb-3">
+    There is a ball of yarn loose on this site. Monsters come for the cards on every
+    listing page and chew them to pieces; the yarn is what you stop them with.
+    It is already running &mdash; open the
+    <a href="/" class="text-yarn-coral hover:underline">home page</a> or
+    <a href="/projects" class="text-yarn-coral hover:underline">projects</a> and move
+    your mouse. On a phone, tilt it: the ball rolls.
+  </p>
+  <p class="font-body text-text-muted mb-10 text-sm">
+    Every fifth level is quieter than the one before it, every tenth throws a boss at
+    you, and the run ends when the last card on the page is destroyed.
+  </p>
+
+  <h2 class="text-3xl font-heading font-bold text-yarn-purple mb-2">Bosses</h2>
+  <p class="font-body text-text-muted mb-5 text-sm">
+    Beating one is permanent, and so is what it hands you. Kept in this browser only
+    &mdash; clearing site data empties the cabinet.
+  </p>
+
+  <div class="boss-cabinet mb-12">
+    {BOSSES.map((boss, i) => (
+      <article class="boss-card boss-locked" data-boss={boss.id} data-index={i}>
+        <div class="boss-portrait">
+          <canvas width={PORTRAIT} height={PORTRAIT} data-boss-canvas={boss.kind}></canvas>
+          <span class="boss-unknown" aria-hidden="true">?</span>
+        </div>
+
+        <div class="boss-body">
+          <h3 class="boss-name font-heading">{boss.name}</h3>
+          <p class="boss-meta font-body">Level {boss.level}</p>
+          <p class="boss-blurb font-body">{boss.blurb}</p>
+          <p class="boss-hidden-blurb font-body">
+            Something is waiting past the one above. Beat that first.
+          </p>
+        </div>
+
+        <div class="boss-reward">
+          <p class="boss-reward-label font-body">Unlocks</p>
+          {boss.unlock ? (
+            <>
+              <p class="boss-reward-name font-heading">{boss.unlock.name}</p>
+              <p class="boss-reward-text font-body">{boss.unlock.description}</p>
+            </>
+          ) : (
+            <>
+              <p class="boss-reward-name font-heading">Not decided</p>
+              <p class="boss-reward-text font-body">
+                This one has no reward attached to it yet.
+              </p>
+            </>
+          )}
+        </div>
+      </article>
+    ))}
+
+    <article class="boss-card boss-more" data-boss="__more">
+      <div class="boss-portrait">
+        <span class="boss-unknown" aria-hidden="true">?</span>
+      </div>
+      <div class="boss-body">
+        <h3 class="boss-name font-heading">More to come</h3>
+        <p class="boss-blurb font-body">
+          The swarm keeps thickening past the last boss. Something will eventually be
+          waiting at the end of it.
+        </p>
+      </div>
+    </article>
+  </div>
+
+  <h2 class="text-3xl font-heading font-bold text-yarn-yellow mb-2">Leaderboard</h2>
+  <p class="font-body text-text-muted mb-5 text-sm">
+    Best run per player. Submit yours from the game-over screen.
+  </p>
+  <Leaderboard />
+</BaseLayout>
+
+<script>
+  import { BOSSES, defeatedBosses } from "@scripts/yarn-game/boss-progress";
+  import { createMonster, drawMonsterSprite, type MonsterKind } from "@scripts/yarn-game/monsters";
+
+  /**
+   * One throwaway monster per boss, posed for a portrait: fully spawned, full
+   * health, nothing mid-telegraph. They are built once and then only have
+   * their wing phase advanced, so the portrait is the same creature the game
+   * draws rather than a drawing of it.
+   */
+  const posed = new Map<string, ReturnType<typeof createMonster>>();
+
+  function poseFor(kind: MonsterKind) {
+    let m = posed.get(kind);
+    if (!m) {
+      m = createMonster(kind, 0, 0, null, {
+        size: kind === "queen" ? 80 : 70,
+        hp: 12, maxHp: 12, isBig: true, isHuge: true,
+      });
+      m.spawnAnim = 1;
+      posed.set(kind, m);
+    }
+    return m;
+  }
+
+  let rafId = 0;
+
+  function render(canvases: HTMLCanvasElement[]) {
+    const draw = (now: number) => {
+      const time = now / 1000;
+      for (const canvas of canvases) {
+        const kind = canvas.dataset.bossCanvas as MonsterKind | undefined;
+        const ctx = canvas.getContext("2d");
+        if (!kind || !ctx) continue;
+        const m = poseFor(kind);
+        m.wingPhase = time * 4;
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.save();
+        // Slightly below centre: these sprites hang their legs and wings low,
+        // and both bosses carry a health bar under the body.
+        ctx.translate(canvas.width / 2, canvas.height / 2 - canvas.height * 0.06);
+        const scale = canvas.width / 240;
+        ctx.scale(scale, scale);
+        drawMonsterSprite(ctx, m, m.size, time);
+        ctx.restore();
+      }
+      rafId = requestAnimationFrame(draw);
+    };
+    rafId = requestAnimationFrame(draw);
+  }
+
+  function setup() {
+    // A navigation leaves the previous page's loop running — see the view
+    // transition notes in CLAUDE.md. Always cancel before starting another.
+    cancelAnimationFrame(rafId);
+
+    const cabinet = document.querySelector(".boss-cabinet");
+    if (!cabinet) return;
+
+    const done = defeatedBosses();
+    // Everything up to and including the first boss you have not beaten is
+    // shown; the one after that is a question mark, and the rest are not your
+    // business yet.
+    const nextIndex = BOSSES.findIndex((b) => !done.has(b.id));
+    const reveal = nextIndex === -1 ? BOSSES.length : nextIndex;
+
+    const cards = [...cabinet.querySelectorAll<HTMLElement>(".boss-card")];
+    const live: HTMLCanvasElement[] = [];
+
+    for (const card of cards) {
+      const id = card.dataset.boss ?? "";
+      const isMore = id === "__more";
+      const index = isMore ? BOSSES.length : Number(card.dataset.index);
+
+      // The trailing card keeps its own wording in every position — it is a
+      // promise, not a boss — so it only decides whether it is on the page.
+      // "unknown-state", not "unknown": .boss-unknown is the question mark
+      // glyph inside the card, and the two must not collide.
+      const state =
+        isMore ? (index <= reveal + 1 ? "more-shown" : "hidden")
+        : done.has(id) ? "beaten"
+        : index === reveal ? "locked"
+        : index === reveal + 1 ? "unknown-state"
+        : "hidden";
+
+      card.classList.remove("boss-locked");
+      card.classList.add(`boss-${state}`);
+      if (state === "beaten" || state === "locked") {
+        const canvas = card.querySelector<HTMLCanvasElement>("canvas");
+        if (canvas) live.push(canvas);
+      }
+    }
+
+    if (live.length > 0) render(live);
+  }
+
+  document.addEventListener("astro:page-load", setup);
+  document.addEventListener("astro:before-swap", () => cancelAnimationFrame(rafId));
+</script>
+
+<style>
+  .boss-cabinet {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+  }
+
+  /* A row per boss: who it is on the left, what it pays on the right. Side by
+     side because the reward is the reason to care about the fight, and putting
+     it underneath buried it at the bottom of a tall card. Stacks on a phone,
+     where there is no "beside". */
+  .boss-card {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.25rem 1.25rem;
+    align-items: center;
+    padding: 1rem 1.25rem;
+    background: var(--surface-translucent);
+    border: 2px dashed var(--color-border-soft);
+    border-radius: 1rem;
+    box-shadow: var(--shadow-panel);
+  }
+
+  @media (min-width: 900px) {
+    .boss-card {
+      grid-template-columns: auto 1fr 20rem;
+    }
+  }
+
+  .boss-portrait {
+    position: relative;
+    display: grid;
+    place-items: center;
+    width: 132px;
+    height: 132px;
+  }
+
+  .boss-portrait canvas {
+    width: 132px;
+    height: 132px;
+  }
+
+  .boss-unknown {
+    display: none;
+    font-family: var(--font-heading);
+    font-size: 4.5rem;
+    font-weight: 700;
+    color: var(--color-text-muted);
+    opacity: 0.4;
+  }
+
+  .boss-name {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: var(--color-text-charcoal);
+    line-height: 1.15;
+  }
+
+  .boss-meta {
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--color-text-muted);
+    margin-bottom: 0.4rem;
+  }
+
+  .boss-blurb,
+  .boss-hidden-blurb {
+    font-size: 0.95rem;
+    color: var(--color-text-charcoal);
+  }
+
+  .boss-hidden-blurb { display: none; }
+
+  .boss-reward {
+    border-left: 2px dashed var(--tint-hairline);
+    padding-left: 1rem;
+  }
+
+  @media (max-width: 899px) {
+    .boss-reward {
+      grid-column: 1 / -1;
+      border-left: none;
+      border-top: 2px dashed var(--tint-hairline);
+      padding-left: 0;
+      padding-top: 0.75rem;
+      margin-top: 0.5rem;
+    }
+  }
+
+  .boss-reward-label {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--color-text-muted);
+  }
+
+  .boss-reward-name {
+    font-size: 1.3rem;
+    font-weight: 700;
+    color: var(--color-yarn-yellow);
+  }
+
+  .boss-reward-text {
+    font-size: 0.9rem;
+    color: var(--color-text-muted);
+  }
+
+  /* ── States ──
+     Beaten: in colour, reward lit. Locked: the same sprite drained of colour,
+     so you can see what is coming without it looking earned. Unknown: no
+     sprite at all. Hidden: not on the page. */
+  .boss-beaten {
+    border-color: var(--color-yarn-yellow);
+  }
+
+  .boss-locked .boss-portrait canvas {
+    filter: grayscale(1) brightness(0.85);
+    opacity: 0.4;
+  }
+
+  .boss-locked .boss-reward-name {
+    color: var(--color-text-muted);
+  }
+
+  .boss-unknown-state .boss-portrait canvas,
+  .boss-more .boss-portrait canvas {
+    display: none;
+  }
+
+  .boss-unknown-state .boss-unknown,
+  .boss-more .boss-unknown {
+    display: block;
+  }
+
+  .boss-unknown-state .boss-name,
+  .boss-unknown-state .boss-meta,
+  .boss-unknown-state .boss-blurb,
+  .boss-unknown-state .boss-reward {
+    display: none;
+  }
+
+  .boss-unknown-state .boss-hidden-blurb { display: block; }
+
+  .boss-unknown-state,
+  .boss-more {
+    opacity: 0.75;
+  }
+
+  .boss-hidden { display: none; }
+
+  /* Before the script runs nothing is known, so nothing is claimed: the
+     portraits sit drained and the rewards read as unearned. */
+  .boss-locked .boss-name { color: var(--color-text-muted); }
+</style>

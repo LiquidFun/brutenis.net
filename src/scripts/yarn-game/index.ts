@@ -376,7 +376,7 @@ function initScoreSubmitUI() {
       );
       if (result.rank && rankEl) {
         // data-astro-reload: full page load so the game state resets, like "Try Again"
-        rankEl.innerHTML = `You placed #${result.rank}! <a href="/leaderboard" class="submit-rank-link" data-astro-reload>View Leaderboard</a>`;
+        rankEl.innerHTML = `You placed #${result.rank}! <a href="/games/yarn" class="submit-rank-link" data-astro-reload>View Leaderboard</a>`;
         rankEl.style.display = "block";
       } else if (!result.accepted && rankEl) {
         rankEl.textContent = "Score recorded, but flagged as implausible.";

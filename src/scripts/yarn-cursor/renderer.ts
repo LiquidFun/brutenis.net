@@ -50,6 +50,49 @@ export function drawRope(
   ctx.globalAlpha = 1;
 }
 
+/**
+ * The yarn alight — what a combo looks like (see monsters.ts).
+ *
+ * Drawn under the ball so the wound yarn still reads as yarn, in the same
+ * chunky pixels as everything else the game draws. Deterministic flicker from
+ * `time`: a fire made of Math.random() boils rather than burns.
+ */
+export function drawFlames(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  radius: number,
+  time: number,
+) {
+  const prevAlpha = ctx.globalAlpha;
+
+  // Heat haze, so the ball reads as glowing rather than merely decorated
+  const glow = ctx.createRadialGradient(x, y, radius * 0.2, x, y, radius * 2.6);
+  glow.addColorStop(0, "rgba(255, 215, 0, 0.55)");
+  glow.addColorStop(0.5, "rgba(243, 156, 18, 0.25)");
+  glow.addColorStop(1, "rgba(243, 156, 18, 0)");
+  ctx.fillStyle = glow;
+  ctx.beginPath();
+  ctx.arc(x, y, radius * 2.6, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Tongues: each one climbs, narrows and dies on its own schedule
+  const tongues = 9;
+  for (let i = 0; i < tongues; i++) {
+    const phase = (time * 1.9 + i / tongues) % 1;
+    const spread = Math.sin(i * 2.4) * radius * 0.9;
+    const wobble = Math.sin(time * 9 + i * 1.7) * radius * 0.25;
+    const fx = x + spread * (1 - phase * 0.4) + wobble;
+    const fy = y - phase * radius * 2.4;
+    const size = Math.max(1.5, radius * (0.5 - phase * 0.35));
+    ctx.globalAlpha = (1 - phase) * 0.85;
+    ctx.fillStyle = phase < 0.3 ? "#ffffff" : phase < 0.6 ? "#ffd32a" : "#e67e22";
+    ctx.fillRect(Math.round(fx - size / 2), Math.round(fy - size / 2), size, size);
+  }
+
+  ctx.globalAlpha = prevAlpha;
+}
+
 export function drawYarnBall(
   ctx: CanvasRenderingContext2D,
   ball: YarnBall,

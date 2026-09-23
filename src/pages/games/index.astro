@@ -8,11 +8,31 @@ const games = (await getCollection("games"))
 
 const featured = games.filter((g) => g.data.featured);
 const rest = games.filter((g) => !g.data.featured);
+
+// The one game here that isn't on the GitHub profile, because it isn't a repo
+// — it is this site. Hand-written rather than loaded, and first in the list:
+// it is the only one a visitor is already playing.
+const yarn = {
+  title: "Yarn Game",
+  description:
+    "The ball of yarn loose on this site. Monsters eat the cards on every listing page, you swat them with the yarn — bosses, unlocks and a leaderboard.",
+  date: new Date("2026-04-01"),
+  tags: ["typescript", "canvas", "web"],
+  slug: "yarn",
+};
 ---
 
 <BaseLayout title="Games">
   <h1 class="text-5xl font-heading font-bold text-yarn-green mb-8">Games</h1>
   <div class="grid gap-4 md:grid-cols-2">
+    <ProjectCard
+      title={yarn.title}
+      description={yarn.description}
+      date={yarn.date}
+      tags={yarn.tags}
+      slug={yarn.slug}
+      basePath="/games"
+    />
     {[...featured, ...rest].map((game) => (
       <ProjectCard
         title={game.data.title}

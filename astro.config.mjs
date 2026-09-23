@@ -52,6 +52,14 @@ const themeBootstrap = `
 
 export default defineConfig({
   site: 'https://brutenis.net',
+
+  // The board grew into a whole page about the game — bosses, unlocks, scores.
+  // Kept as a redirect rather than deleted: it was linked from the game-over
+  // screen, the footer and the About page for months, and from outside too.
+  redirects: {
+    '/leaderboard': '/games/yarn',
+  },
+
   integrations: [
     sitemap({ filter: (page) => !page.includes('/admin') }),
     {

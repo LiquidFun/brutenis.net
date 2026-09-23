@@ -159,7 +159,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
             { href: "/projects", label: "Projects", extra: [] },
             { href: "/games", label: "Games", extra: [] },
             { href: "/photography", label: "Photography", extra: [] },
-            { href: "/about", label: "About", extra: ["/leaderboard"] },
+            { href: "/about", label: "About", extra: [] },
           ].map(({ href, label, extra }) => (
             <a href={href} class:list={["nav-link", { "nav-link-active": Astro.url.pathname.startsWith(href) || extra.some((p) => p === "/" ? Astro.url.pathname === "/" : Astro.url.pathname.startsWith(p)) }]}>{label}</a>
           ))}
@@ -181,7 +181,7 @@ const canonicalURL = new URL(Astro.url.pathname, Astro.site);
         <div class="flex justify-center gap-4 mt-2">
           <a href="https://github.com/LiquidFun" class="hover:text-yarn-coral transition-colors">GitHub</a>
           <a href="mailto:brutenis@gmail.com" class="hover:text-yarn-coral transition-colors">Contact</a>
-          <a href="/leaderboard" class="hover:text-yarn-coral transition-colors">Leaderboard</a>
+          <a href="/games/yarn" class="hover:text-yarn-coral transition-colors">Yarn Game</a>
           <a href="/privacy" class="hover:text-yarn-coral transition-colors">Privacy</a>
           <a href="/rss.xml" class="hover:text-yarn-coral transition-colors">RSS</a>
         </div>

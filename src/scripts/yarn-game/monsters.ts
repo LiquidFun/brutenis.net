@@ -1,4 +1,5 @@
 import { CANVAS_HEADING_FONT } from "../fonts";
+import { hasUnlock, recordBossDefeat } from "./boss-progress";
 const MONSTER_COLORS = [
   { body: "#6c3483", eye: "#e74c3c", wing: "#8e44ad" },
   { body: "#1a5276", eye: "#f39c12", wing: "#2980b9" },
@@ -202,6 +203,18 @@ const PHASE_COLOR = "#00cec9";
  */
 const HIT_RADIUS_FACTOR = window.matchMedia("(hover: none)").matches ? 1.0 : 2.0;
 
+// ── Combos (unlocked for good by beating the first boss) ──
+// Kills chained without a pause set the yarn alight, and burning yarn goes
+// through shield plates instead of having to find the gap. It is the reward
+// for the fight that taught the player to find gaps in the first place.
+//
+// Deliberately worth no points: the backend validates a run's score against
+// its own event log, so a kill has to be worth what it has always been worth.
+// The combo pays out in reach, not in score.
+const COMBO_WINDOW = 2.5; // seconds a chain survives without a kill
+const COMBO_IGNITE = 5;   // kills in the chain before the yarn lights up
+const COMBO_UNLOCK = "combo";
+
 const MAX_CARD_HP = 5;
 const DAMAGE_PER_SECOND = 0.5;
 
@@ -400,7 +413,7 @@ interface Projectile {
   color: string;
 }
 
-type MonsterKind = "moth" | "shooter" | "shielded" | "boss" | "snarl" | "queen";
+export type MonsterKind = "moth" | "shooter" | "shielded" | "boss" | "snarl" | "queen";
 
 /**
  * Where the Loom Queen's thread caught the player's yarn. Purely cosmetic — the
@@ -556,7 +569,7 @@ let snarlSnapCount = 0;
  * Single construction point for every monster — the behaviour branches below
  * still read the `is*` booleans, but only this factory decides them.
  */
-function createMonster(
+export function createMonster(
   kind: MonsterKind,
   x: number, y: number,
   target: SpawnTarget | null,
@@ -816,6 +829,546 @@ function compact<T>(arr: T[], keep: (item: T) => boolean): void {
 
 // ── Manager ──
 
+/**
+ * Past the halfway mark, everything about the blink gets bigger and shorter,
+ * and it stays that way for the rest of the fight — the last phase inherits
+ * these numbers rather than dropping the mechanic.
+ */
+function queenLatePhase(q: Monster): boolean {
+  return q.hp <= QUEEN_PHASE2_HP;
+}
+
+/** Half-width of the silk thread, in the viewport it is being drawn in. */
+function threadHalfWidth(q: Monster): number {
+  const short = Math.min(window.innerWidth, window.innerHeight);
+  const base = Math.max(
+    QUEEN_THREAD_HALF_MIN,
+    Math.min(QUEEN_THREAD_HALF_MAX, short * QUEEN_THREAD_FRAC),
+  );
+  return queenLatePhase(q) ? base * QUEEN_PHASE2_SPREAD : base;
+}
+
+/** Radius of the silk bulb around her body at each end of the blink. */
+function auraRadius(q: Monster): number {
+  const short = Math.min(window.innerWidth, window.innerHeight);
+  const base = Math.max(
+    QUEEN_AURA_MIN,
+    Math.min(QUEEN_AURA_MAX, short * QUEEN_AURA_FRAC),
+  );
+  return queenLatePhase(q) ? base * QUEEN_PHASE2_SPREAD : base;
+}
+
+/**
+ * Draws a monster's own pixel art at the origin, `s` pixels tall-ish, with no
+ * transform, alpha or composite setup of its own — the caller has already
+ * translated to the monster and decided how solid it is.
+ *
+ * Module-level and exported rather than a method, because the achievements on
+ * the yarn game page draw the same bosses from a throwaway Monster, and a
+ * boss portrait that drifts out of sync with the boss you fight is worse than
+ * no portrait at all.
+ */
+export function drawMonsterSprite(
+  ctx: CanvasRenderingContext2D,
+  m: Monster,
+  s: number,
+  time: number,
+) {
+  const px = (x: number, y: number, w: number, h: number) => {
+    ctx.fillRect(Math.round(x), Math.round(y), w, h);
+  };
+  // Every colour of the creature itself goes through this, so a phased one is
+  // drawn in negative. Telegraphs and meters (a spider's web, its strain bar)
+  // deliberately do not — those belong to the game, not the monster.
+  const col = (hex: string) => (m.phased ? invertHex(hex) : hex);
+
+  if (m.isQueen) {
+    // ── Loom Queen: pixel art spider matriarch behind a web cage ──
+    const q = QUEEN_COLORS;
+    const p = s / 10;
+    const rage = m.hp <= QUEEN_PHASE3_HP;
+    const bob = Math.sin(m.wingPhase * 0.7) * p * 0.8;
+
+    // Eight arched legs, alternating their gait
+    ctx.fillStyle = q.leg;
+    for (let side = -1; side <= 1; side += 2) {
+      for (let i = 0; i < 4; i++) {
+        const a = -0.85 + i * 0.5 + Math.sin(m.wingPhase + i * 0.9) * 0.12;
+        for (let j = 1; j <= 5; j++) {
+          const r = j * p * 1.7;
+          const lx = side * Math.cos(a) * r;
+          const ly = Math.sin(a) * r - Math.sin((j / 5) * Math.PI) * p * 2.2;
+          px(lx - p * 0.55, ly - p * 0.55 + bob, p * 1.1, p * 1.1);
+        }
+      }
+    }
+
+    // Abdomen
+    ctx.fillStyle = q.body;
+    px(-3.5 * p, 0.5 * p + bob, 7 * p, 6 * p);
+    px(-2.5 * p, -0.5 * p + bob, 5 * p, 1 * p);
+    px(-2.5 * p, 6.5 * p + bob, 5 * p, 1 * p);
+    // Hourglass marking — turns red when she unravels
+    ctx.fillStyle = rage ? q.rage : q.accent;
+    px(-1 * p, 2 * p + bob, 2 * p, 1.5 * p);
+    px(-1.5 * p, 3.5 * p + bob, 3 * p, 1.5 * p);
+
+    // Head / thorax
+    ctx.fillStyle = q.body;
+    px(-2.5 * p, -4.5 * p + bob, 5 * p, 4 * p);
+    // Crown
+    ctx.fillStyle = q.accent;
+    px(-2.5 * p, -5.2 * p + bob, 5 * p, 0.8 * p);
+    px(-2.5 * p, -6.2 * p + bob, 1 * p, 1.5 * p);
+    px(-0.5 * p, -6.8 * p + bob, 1 * p, 2 * p);
+    px(1.5 * p, -6.2 * p + bob, 1 * p, 1.5 * p);
+    // Six eyes
+    ctx.fillStyle = rage ? q.rage : q.eye;
+    px(-1.8 * p, -3.8 * p + bob, 1 * p, 1 * p);
+    px(0.8 * p, -3.8 * p + bob, 1 * p, 1 * p);
+    px(-1.2 * p, -2.5 * p + bob, 0.7 * p, 0.7 * p);
+    px(0.5 * p, -2.5 * p + bob, 0.7 * p, 0.7 * p);
+    px(-2.4 * p, -2.5 * p + bob, 0.6 * p, 0.6 * p);
+    px(1.8 * p, -2.5 * p + bob, 0.6 * p, 0.6 * p);
+    if (rage) {
+      ctx.globalAlpha = 0.4 + Math.sin(time * 9) * 0.3;
+      px(-2.4 * p, -4.2 * p + bob, 2 * p, 2 * p);
+      px(0.4 * p, -4.2 * p + bob, 2 * p, 2 * p);
+      ctx.globalAlpha = 1;
+    }
+    // Fangs
+    ctx.fillStyle = "#ecf0f1";
+    px(-1.3 * p, -1.2 * p + bob, 0.7 * p, 1.4 * p);
+    px(0.6 * p, -1.2 * p + bob, 0.7 * p, 1.4 * p);
+
+    // ── The thread she is about to travel ──
+    // Same geometry the freeze check uses, in her local space. It thickens
+    // and heats up as the telegraph runs out, so "how long have I got" is
+    // readable without counting, and the landing spot is marked outright.
+    if (m.queenTelegraph > 0) {
+      const charge = 1 - m.queenTelegraph / m.queenTelegraphMax;
+      const dx = m.queenDestX - m.x;
+      const dy = m.queenDestY - m.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const nx = -dy / len, ny = dx / len; // thread normal
+      const hot = charge > 0.65;
+      // Always the true collision sizes. Growing them during the telegraph
+      // would mean the safe-looking gap the player commits to is a lie.
+      const half = threadHalfWidth(m);
+      const aura = auraRadius(m);
+
+      ctx.fillStyle = hot ? q.strandHot : q.strand;
+
+      // The swept band, filled so the hazard reads as an area rather than
+      // as a line with two loose rails beside it
+      ctx.globalAlpha = 0.1 + charge * 0.18;
+      ctx.beginPath();
+      ctx.moveTo(nx * half, ny * half);
+      ctx.lineTo(dx + nx * half, dy + ny * half);
+      ctx.lineTo(dx - nx * half, dy - ny * half);
+      ctx.lineTo(-nx * half, -ny * half);
+      ctx.closePath();
+      ctx.fill();
+
+      // The bulbs she leaves from and arrives into
+      ctx.beginPath();
+      ctx.arc(0, 0, aura, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(dx, dy, aura, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = 0.5 + charge * 0.5;
+      const steps = Math.max(16, Math.round(len / 10));
+      for (let i = 0; i <= steps; i++) {
+        const t = i / steps;
+        const sz = i % 2 === 0 ? 6 : 4;
+        px(dx * t - sz / 2, dy * t - sz / 2, sz, sz);
+        // Fray marking the exact edge of what will catch the yarn
+        px(dx * t + nx * half - 1.5, dy * t + ny * half - 1.5, 3, 3);
+        px(dx * t - nx * half - 1.5, dy * t - ny * half - 1.5, 3, 3);
+      }
+
+      // Dotted rims on both bulbs, at their true radius. They counter-rotate
+      // so the pair reads as one hazard being drawn tight.
+      ctx.globalAlpha = 0.6 + charge * 0.4;
+      const rim = Math.max(14, Math.round(aura / 7));
+      for (let i = 0; i < rim; i++) {
+        const a = (i / rim) * Math.PI * 2 + charge * 2.2;
+        px(Math.cos(a) * aura - 2, Math.sin(a) * aura - 2, 4, 4);
+        px(dx + Math.cos(-a) * aura - 2, dy + Math.sin(-a) * aura - 2, 4, 4);
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    drawHpBar(px, ctx, s, p, Math.max(0, m.hp / m.maxHp));
+
+  } else if (m.isSnarl) {
+    // ── Snarl: little spider squatting on your yarn ──
+    const c = SNARL_COLORS[m.colorIdx];
+    const p = s / 6;
+    const strain = m.snarlStrain;
+
+    if (m.snarlAttached) {
+      ctx.fillStyle = strain > 0.6 ? SNARL_STRAIN_WARN : c.web;
+      ctx.globalAlpha = 0.35 + strain * 0.55;
+
+      // Leash to the yarn, when the web holds it at a distance (mobile)
+      const lx = m.snarlLeashX - m.x;
+      const ly = m.snarlLeashY - m.y;
+      const leash = Math.hypot(lx, ly);
+      if (leash > s) {
+        const steps = Math.min(40, Math.round(leash / 9));
+        for (let i = 1; i <= steps; i++) {
+          const t = i / steps;
+          const sag = Math.sin(t * Math.PI) * (1 - strain) * 12;
+          px(lx * t - p * 0.35, ly * t + sag - p * 0.35, p * 0.7, p * 0.7);
+        }
+      }
+
+      // Silk radiating from the bite point, shivering as strain builds
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 + m.wingPhase * 0.15;
+        for (let j = 2; j <= 6; j++) {
+          const r = j * p * 1.5 * (1 + strain * 0.18 * Math.sin(time * 22 + j));
+          px(Math.cos(a) * r - p * 0.35, Math.sin(a) * r - p * 0.35, p * 0.7, p * 0.7);
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // Legs
+    ctx.fillStyle = col(c.leg);
+    for (let side = -1; side <= 1; side += 2) {
+      for (let i = 0; i < 4; i++) {
+        const a = -0.8 + i * 0.5 + Math.sin(m.wingPhase * 1.5 + i) * 0.15;
+        for (let j = 1; j <= 3; j++) {
+          const r = j * p * 1.3;
+          const lx = side * Math.cos(a) * r;
+          const ly = Math.sin(a) * r - Math.sin((j / 3) * Math.PI) * p * 1.1;
+          px(lx - p * 0.4, ly - p * 0.4, p * 0.8, p * 0.8);
+        }
+      }
+    }
+    // Body
+    ctx.fillStyle = col(c.body);
+    px(-1.5 * p, -0.4 * p, 3 * p, 3.2 * p);
+    px(-1 * p, -2.2 * p, 2 * p, 1.9 * p);
+    ctx.fillStyle = col(c.eye);
+    px(-0.85 * p, -1.8 * p, 0.6 * p, 0.6 * p);
+    px(0.25 * p, -1.8 * p, 0.6 * p, 0.6 * p);
+
+    // Wind-up telegraph: a closing ring showing exactly how far the web can
+    // reach. Get the yarn outside it before it snaps shut and nothing happens.
+    if (m.snarlWindup > 0) {
+      const t = 1 - m.snarlWindup / SNARL_WINDUP;
+      const ringR = SNARL_ATTACH_RANGE * (1 - t * 0.25);
+      ctx.fillStyle = SNARL_STRAIN_WARN;
+      ctx.globalAlpha = 0.45 + t * 0.5;
+      const dots = 54;
+      for (let i = 0; i < dots; i++) {
+        // Dashes sweep round as it charges, so the ring reads as tightening
+        const a = (i / dots) * Math.PI * 2 + t * 0.8;
+        const d = 4 + t * 3;
+        px(Math.cos(a) * ringR - d / 2, Math.sin(a) * ringR - d / 2, d, d);
+      }
+      // Spokes reeling inward, pointing at what is about to be grabbed
+      ctx.globalAlpha = 0.25 + t * 0.45;
+      for (let i = 0; i < 6; i++) {
+        const a = (i / 6) * Math.PI * 2 - t * 1.2;
+        for (let j = 3; j <= 7; j++) {
+          const r = ringR * (j / 8) * (1 - t * 0.2);
+          px(Math.cos(a) * r - 2, Math.sin(a) * r - 2, 4, 4);
+        }
+      }
+      ctx.globalAlpha = 1;
+    }
+
+    // Strain meter — shown from the moment it latches, so the answer to
+    // "what do I do?" is on screen rather than in a hint that already faded
+    if (m.snarlAttached) {
+      const bw = s * 2.2;
+      const by = -s * 1.7;
+      ctx.fillStyle = "#2c3e50";
+      px(-bw / 2 - 1, by - 1, bw + 2, 7);
+      ctx.fillStyle = "#ecf0f1";
+      px(-bw / 2, by, bw, 5);
+      ctx.fillStyle = strain > 0.66 ? SNARL_STRAIN_WARN : strain > 0.33 ? "#f1c40f" : "#e67e22";
+      px(-bw / 2, by, bw * strain, 5);
+    }
+
+  } else if (m.isBoss) {
+    // ── Boss: large pixel art demon moth ──
+    const bc = BOSS_COLORS[m.colorIdx];
+    const p = s / 10; // finer pixel grid for bigger creature
+    const wingUp = Math.sin(m.wingPhase) * 0.5;
+    const bob = Math.sin(m.wingPhase * 0.7) * p * 0.8;
+    const bossPhase2 = m.hp <= BOSS_HP / 2;
+
+    // Massive wings — 4 wing segments, layered
+    ctx.fillStyle = bc.wing;
+    // Outer wings
+    px(-8 * p, (-2 + wingUp) * p + bob, 4 * p, 6 * p);
+    px(-7 * p, (-5 + wingUp) * p + bob, 3 * p, 3 * p);
+    px(-6 * p, (-7 + wingUp) * p + bob, 2 * p, 2 * p);
+    px(4 * p, (-2 + wingUp) * p + bob, 4 * p, 6 * p);
+    px(4 * p, (-5 + wingUp) * p + bob, 3 * p, 3 * p);
+    px(4 * p, (-7 + wingUp) * p + bob, 2 * p, 2 * p);
+    // Inner wing detail
+    ctx.fillStyle = bossPhase2 ? "#c0392b" : bc.body;
+    px(-7 * p, (-1 + wingUp) * p + bob, 2 * p, 4 * p);
+    px(5 * p, (-1 + wingUp) * p + bob, 2 * p, 4 * p);
+
+    // Large body
+    ctx.fillStyle = bc.body;
+    px(-4 * p, -5 * p + bob, 8 * p, 10 * p);
+    px(-3 * p, -6 * p + bob, 6 * p, 1 * p);
+    px(-3 * p, 5 * p + bob, 6 * p, 1.5 * p);
+    // Shoulder pads
+    px(-5 * p, -4 * p + bob, 1.5 * p, 3 * p);
+    px(3.5 * p, -4 * p + bob, 1.5 * p, 3 * p);
+
+    // Armor plating — heavy
+    ctx.fillStyle = "#2c3e50";
+    px(-3 * p, -4 * p + bob, 6 * p, 2 * p);
+    px(-3.5 * p, -2 * p + bob, 1.5 * p, 5 * p);
+    px(2 * p, -2 * p + bob, 1.5 * p, 5 * p);
+    // Crown / horns
+    ctx.fillStyle = bc.accent;
+    px(-2 * p, -7 * p + bob, 1.5 * p, 2 * p);
+    px(0.5 * p, -7 * p + bob, 1.5 * p, 2 * p);
+    px(-3 * p, -6.5 * p + bob, 1 * p, 1.5 * p);
+    px(2 * p, -6.5 * p + bob, 1 * p, 1.5 * p);
+
+    // Eyes — larger, menacing
+    ctx.fillStyle = "#1a1a2e";
+    px(-2.5 * p, -3 * p + bob, 2 * p, 2 * p);
+    px(0.5 * p, -3 * p + bob, 2 * p, 2 * p);
+    ctx.fillStyle = bc.eye;
+    px(-2 * p, -2.5 * p + bob, 1.2 * p, 1.2 * p);
+    px(1 * p, -2.5 * p + bob, 1.2 * p, 1.2 * p);
+    // Eye glow in phase 2
+    if (bossPhase2) {
+      ctx.fillStyle = "#e74c3c";
+      ctx.globalAlpha = 0.5 + Math.sin(time * 8) * 0.3;
+      px(-2.5 * p, -3.5 * p + bob, 2.5 * p, 2.5 * p);
+      px(0.3 * p, -3.5 * p + bob, 2.5 * p, 2.5 * p);
+      ctx.globalAlpha = m.bossInvulnTimer > 0 ? 0.4 + Math.sin(m.bossInvulnTimer * 20) * 0.3 : (m.flashTimer > 0 ? 0.5 : 1);
+    }
+
+    // Mouth — wide gash
+    ctx.fillStyle = "#1a1a2e";
+    px(-2 * p, 1 * p + bob, 4 * p, 2 * p);
+    ctx.fillStyle = bc.accent;
+    // Fangs
+    px(-1.5 * p, 0.5 * p + bob, 0.8 * p, 1 * p);
+    px(0.8 * p, 0.5 * p + bob, 0.8 * p, 1 * p);
+    px(-0.5 * p, 2.5 * p + bob, 0.8 * p, 0.8 * p);
+
+    // Tail / lower body detail
+    ctx.fillStyle = bc.wing;
+    px(-1.5 * p, 6 * p + bob, 3 * p, 1.5 * p);
+    px(-1 * p, 7 * p + bob, 2 * p, 1 * p);
+
+    // Trail particles — bigger, more
+    ctx.fillStyle = bc.wing; ctx.globalAlpha = 0.3;
+    for (let i = 0; i < 6; i++) {
+      const tx = Math.sin(time * 2.5 + i * 1.2 + m.wingPhase) * s * 1.1;
+      const ty = Math.cos(time * 1.8 + i * 2.0 + m.wingPhase) * s * 0.5 + s * 1.1;
+      ctx.fillRect(tx - p * 0.8, ty - p * 0.8, p * 1.6, p * 1.6);
+    }
+    ctx.globalAlpha = m.bossInvulnTimer > 0 ? 0.4 + Math.sin(m.bossInvulnTimer * 20) * 0.3 : (m.flashTimer > 0 ? 0.5 : 1);
+
+    // ── Boss shield: 7/8 segments, 1 open ──
+    const shieldR = s * 1.6;
+    for (let i = 0; i < 8; i++) {
+      if (!isPlatedSegment(m, i)) continue; // the opening
+      const segAngle = m.shieldAngle + i * (Math.PI / 4);
+      const flash = m.shieldFlash[i] > 0;
+      ctx.fillStyle = flash ? BOSS_SHIELD_GLOW : BOSS_SHIELD_COLOR;
+      ctx.globalAlpha = flash ? 0.95 : (m.bossInvulnTimer > 0 ? 0.9 : 0.65);
+      // 4 pixel blocks per segment for larger shield
+      for (let j = -1.5; j <= 1.5; j++) {
+        const a = segAngle + j * (Math.PI / 20);
+        const bx = Math.cos(a) * shieldR;
+        const by = Math.sin(a) * shieldR;
+        px(bx - p * 0.8, by - p * 0.8, p * 1.6, p * 1.6);
+      }
+    }
+    ctx.globalAlpha = 1;
+
+    drawHpBar(px, ctx, s, p, Math.max(0, m.hp / m.maxHp));
+
+  } else if (m.isShielded) {
+    // ── Shielded: bulky pixel art moth with shield plates ──
+    const sc = MONSTER_COLORS[m.colorIdx];
+    const p = s / 7;
+    const wingUp = Math.sin(m.wingPhase) * 0.4;
+
+    // Wings — wider and thicker than regular moth
+    ctx.fillStyle = sc.wing;
+    px(-5.5 * p, (-1 + wingUp) * p, 3 * p, 4 * p);
+    px(-4.5 * p, (-3 + wingUp) * p, 2 * p, 2 * p);
+    px(2.5 * p, (-1 + wingUp) * p, 3 * p, 4 * p);
+    px(2.5 * p, (-3 + wingUp) * p, 2 * p, 2 * p);
+
+    // Body — wider and taller
+    ctx.fillStyle = sc.body;
+    px(-3 * p, -3 * p, 6 * p, 7 * p);
+    px(-2 * p, -4 * p, 4 * p, 1 * p);
+    px(-2 * p, 4 * p, 4 * p, 1 * p);
+    // Armor plates on body
+    ctx.fillStyle = "#5d6d7e";
+    px(-2.5 * p, -2 * p, 1 * p, 4 * p);
+    px(1.5 * p, -2 * p, 1 * p, 4 * p);
+    px(-1 * p, -3.5 * p, 2 * p, 1 * p);
+    px(-1 * p, 3 * p, 2 * p, 1 * p);
+
+    // Eyes
+    ctx.fillStyle = sc.eye;
+    px(-1.5 * p, -2 * p, 1.2 * p, 1.2 * p);
+    px(0.5 * p, -2 * p, 1.2 * p, 1.2 * p);
+    // Mouth
+    ctx.fillStyle = "#2c3e50";
+    px(-1.2 * p, 0.5 * p, 2.4 * p, 1.2 * p);
+    ctx.fillStyle = "#ecf0f1";
+    const eating = m.eatingTimer > 0.3;
+    const jawOpen = eating ? Math.abs(Math.sin(m.eatingTimer * 12)) * p * 1 : 0;
+    px(-0.8 * p, 0.5 * p + jawOpen, 0.6 * p, 0.6 * p);
+    px(0.3 * p, 0.5 * p + jawOpen, 0.6 * p, 0.6 * p);
+
+    // Trail particles (same as moth)
+    ctx.fillStyle = sc.wing; ctx.globalAlpha = 0.35;
+    for (let i = 0; i < 4; i++) {
+      const tx = Math.sin(time * 3.5 + i * 1.8 + m.wingPhase) * s * 0.9;
+      const ty = Math.cos(time * 2.5 + i * 2.5 + m.wingPhase) * s * 0.4 + s;
+      ctx.fillRect(tx - p * 0.6, ty - p * 0.6, p * 1.2, p * 1.2);
+    }
+    ctx.globalAlpha = 1;
+
+    // ── Shield segments ──
+    const shieldR = s * 1.4;
+
+    for (let i = 0; i < 8; i++) {
+      if (!isPlatedSegment(m, i)) continue;
+      const segAngle = m.shieldAngle + i * (Math.PI / 4);
+      const flash = m.shieldFlash[i] > 0;
+      ctx.fillStyle = flash ? SHIELDED_SHIELD_GLOW : SHIELDED_SHIELD_COLOR;
+      ctx.globalAlpha = flash ? 0.95 : 0.7;
+      // Draw 3 pixel blocks per segment in an arc
+      for (let j = -1; j <= 1; j++) {
+        const a = segAngle + j * (Math.PI / 16);
+        const bx = Math.cos(a) * shieldR;
+        const by = Math.sin(a) * shieldR;
+        px(bx - p * 0.6, by - p * 0.6, p * 1.2, p * 1.2);
+      }
+    }
+  } else if (m.isShooter) {
+    // ── Shooter: pixel art floating eye turret ──
+    const sc = SHOOTER_COLORS[m.colorIdx];
+    const p = s / 7;
+    const bob = Math.sin(m.wingPhase) * p * 0.5;
+
+    // Charge glow (pixel squares around body when about to fire)
+    const chargeT = 1 - Math.min(1, m.shootCooldown / SHOOTER_CHARGE_TIME);
+    if (chargeT > 0) {
+      ctx.fillStyle = col(sc.ring);
+      ctx.globalAlpha = chargeT * 0.5;
+      const glow = Math.floor(chargeT * 3) + 1;
+      for (let i = 0; i < 4; i++) {
+        const ga = (i / 4) * Math.PI * 2 + m.wingPhase;
+        const gr = (3.5 + glow) * p;
+        px(Math.cos(ga) * gr - p * 0.4, Math.sin(ga) * gr - p * 0.4 + bob, p * 0.8, p * 0.8);
+      }
+      ctx.globalAlpha = m.flashTimer > 0 ? 0.5 : 1;
+    }
+
+    // Body: blocky hexagonal shape
+    ctx.fillStyle = col(sc.body);
+    px(-2.5 * p, -1.5 * p + bob, 5 * p, 3 * p); // wide center
+    px(-1.5 * p, -2.5 * p + bob, 3 * p, 1 * p); // top
+    px(-1.5 * p, 1.5 * p + bob, 3 * p, 1 * p);  // bottom
+
+    // Dark inner
+    ctx.fillStyle = col("#1a1a2e");
+    px(-1.5 * p, -1 * p + bob, 3 * p, 2.5 * p);
+
+    // Eye white
+    ctx.fillStyle = col("#ecf0f1");
+    px(-1 * p, -0.5 * p + bob, 2 * p, 1.5 * p);
+
+    // Pupil — tracks target
+    let pupilDx = 0, pupilDy = 0;
+    if (m.targetEl) {
+      const tRect = getCachedRect(m.targetEl);
+      const angle = Math.atan2(
+        tRect.top + tRect.height / 2 - m.y,
+        tRect.left + tRect.width / 2 - m.x,
+      );
+      pupilDx = Math.cos(angle) * p * 0.4;
+      pupilDy = Math.sin(angle) * p * 0.4;
+    }
+    ctx.fillStyle = col(sc.eye);
+    px(-0.5 * p + pupilDx, -0.2 * p + bob + pupilDy, 1 * p, 1 * p);
+    // Highlight
+    ctx.fillStyle = col("#ecf0f1");
+    px(-0.5 * p + pupilDx + p * 0.15, -0.2 * p + bob + pupilDy + p * 0.1, p * 0.3, p * 0.3);
+
+    // "Legs" / antenna — small pixel appendages
+    ctx.fillStyle = col(sc.ring);
+    px(-3 * p, -0.5 * p + bob, 0.8 * p, 0.8 * p); // left
+    px(2.2 * p, -0.5 * p + bob, 0.8 * p, 0.8 * p); // right
+    px(-0.4 * p, 2.5 * p + bob, 0.8 * p, 0.8 * p); // bottom barrel
+
+    // HP pips above
+    if (m.hp > 1) {
+      ctx.fillStyle = col(sc.ring);
+      for (let i = 0; i < m.hp; i++) {
+        const pipX = -((m.hp - 1) * p * 0.8) / 2 + i * p * 0.8;
+        px(pipX - p * 0.3, -3.5 * p + bob, p * 0.6, p * 0.5);
+      }
+    }
+  } else {
+    // ── Moth: original pixel art ──
+    const c = MONSTER_COLORS[m.colorIdx];
+    const p = s / 7;
+    const wingUp = Math.sin(m.wingPhase) * 0.6;
+    ctx.fillStyle = col(c.wing);
+    px(-4.5 * p, (-1 + wingUp) * p, 2.5 * p, 3.5 * p);
+    px(-3.5 * p, (-2.5 + wingUp) * p, 1.5 * p, 1.5 * p);
+    px(2 * p, (-1 + wingUp) * p, 2.5 * p, 3.5 * p);
+    px(2 * p, (-2.5 + wingUp) * p, 1.5 * p, 1.5 * p);
+    ctx.fillStyle = col(c.body);
+    px(-2.5 * p, -2.5 * p, 5 * p, 6 * p);
+    px(-1.5 * p, -3.5 * p, 3 * p, 1 * p);
+    px(-1.5 * p, 3.5 * p, 3 * p, 1 * p);
+
+    if (m.isBig && m.hp > 1) {
+      ctx.fillStyle = col("#e74c3c");
+      for (let i = 0; i < m.hp; i++) {
+        const pipX = -((m.hp - 1) * p * 0.8) / 2 + i * p * 0.8;
+        ctx.fillRect(pipX - p * 0.3, -4 * p, p * 0.6, p * 0.5);
+      }
+    }
+
+    ctx.fillStyle = col(c.eye);
+    px(-1.5 * p, -1.5 * p, 1.2 * p, 1.2 * p);
+    px(0.5 * p, -1.5 * p, 1.2 * p, 1.2 * p);
+    ctx.fillStyle = col("#2c3e50");
+    px(-1.2 * p, 1 * p, 2.4 * p, 1.2 * p);
+    ctx.fillStyle = col("#ecf0f1");
+    const eating = m.eatingTimer > 0.3;
+    const jawOpen = eating ? Math.abs(Math.sin(m.eatingTimer * 12)) * p * 1.2 : 0;
+    px(-0.8 * p, 1 * p + jawOpen, 0.6 * p, 0.6 * p);
+    px(0.3 * p, 1 * p + jawOpen, 0.6 * p, 0.6 * p);
+    ctx.fillStyle = col(c.wing); ctx.globalAlpha = 0.35;
+    for (let i = 0; i < 4; i++) {
+      const tx = Math.sin(time * 3.5 + i * 1.8 + m.wingPhase) * s * 0.9;
+      const ty = Math.cos(time * 2.5 + i * 2.5 + m.wingPhase) * s * 0.4 + s;
+      ctx.fillRect(tx - p * 0.6, ty - p * 0.6, p * 1.2, p * 1.2);
+    }
+  }
+}
 export class MonsterManager {
   monsters: Monster[] = [];
   projectiles: Projectile[] = [];
@@ -837,6 +1390,13 @@ export class MonsterManager {
   private floatTexts: FloatText[] = [];
   /** Scratch list for draw ordering, reused every frame. */
   private drawOrder: Monster[] = [];
+  /** Kills in the current chain, and what is left of its window. */
+  combo = 0;
+  private comboTimer = 0;
+  /** Chain long enough that the yarn is alight — see COMBO_IGNITE. */
+  burning = false;
+  /** Whether this browser has earned combos at all. */
+  private combosUnlocked = hasUnlock(COMBO_UNLOCK);
   private mobile: boolean;
   private levelThresholds = [
     5, 15, 30, 50, 80, 120, 170, 230, 300,  // levels 2–10
@@ -1159,6 +1719,34 @@ export class MonsterManager {
     if (thaw) thaw();
   }
 
+  /** Light the yarn, or put it out, and tell the cursor which it is. */
+  private setBurning(on: boolean) {
+    if (this.burning === on) return;
+    this.burning = on;
+    const setBurning = (window as any).__yarnCursorSetBurning;
+    if (setBurning) setBurning(on);
+  }
+
+  /** One more kill on the chain. Ignites once the chain is long enough. */
+  private addCombo(m: Monster) {
+    if (!this.combosUnlocked) return;
+    this.combo++;
+    this.comboTimer = COMBO_WINDOW;
+    if (this.combo === COMBO_IGNITE) {
+      this.setBurning(true);
+      this.addFloatText("ON FIRE!", m.x, m.y - m.size * 1.6, "#f39c12");
+    } else if (this.combo > 1) {
+      this.addFloatText(`x${this.combo}`, m.x, m.y - m.size * 1.4, this.burning ? "#f39c12" : "#e67e22");
+    }
+  }
+
+  /** Drop the chain — the window ran out, or the run did. */
+  private breakCombo() {
+    this.combo = 0;
+    this.comboTimer = 0;
+    this.setBurning(false);
+  }
+
   /** Single death path: score, event, particles, cleanup. (nx, ny) = blast direction. */
   private killMonster(m: Monster, nx: number, ny: number) {
     m.alive = false;
@@ -1172,10 +1760,15 @@ export class MonsterManager {
       payload: { score_delta: m.scoreValue, running_score: this.score, running_level: this.level },
     });
 
+    this.addCombo(m);
+
     // Boss kill: immediately advance to next level
     if (m.isBoss) {
       const nextIdx = this.levelThresholds.findIndex(t => this.score < t);
       if (nextIdx >= 0) this.score = this.levelThresholds[nextIdx];
+      // The trophy, and anything it grants — in this run, not the next one
+      recordBossDefeat(m.kind);
+      if (!this.combosUnlocked) this.combosUnlocked = hasUnlock(COMBO_UNLOCK);
     }
 
     const c = deathColors(m);
@@ -1225,8 +1818,12 @@ export class MonsterManager {
           continue;
         }
 
+        // Burning yarn goes through plate and ring alike — that is the whole
+        // reward. Phase fields are not shields and are not covered: those are
+        // about how fast the ball is travelling, and a combo says nothing
+        // about that.
         // Boss shield check: 7/8 segments active, 1 open
-        if (m.kind === "boss") {
+        if (m.kind === "boss" && !this.burning) {
           const segIdx = shieldSegmentAt(m, ballX, ballY);
           if (isPlatedSegment(m, segIdx)) {
             // Hit shielded segment — bounce off
@@ -1242,7 +1839,7 @@ export class MonsterManager {
         }
 
         // Shield check for shielded enemies
-        if (m.isShielded && m.shieldSegments > 0) {
+        if (m.isShielded && m.shieldSegments > 0 && !this.burning) {
           const segIdx = shieldSegmentAt(m, ballX, ballY);
           if (isPlatedSegment(m, segIdx)) {
             // Bounce off shield — glow + push ball away + brief invulnerability
@@ -1593,7 +2190,7 @@ export class MonsterManager {
       if (d >= QUEEN_BLINK_MIN_DIST) break;
     }
 
-    const p2 = this.queenLatePhase(q);
+    const p2 = queenLatePhase(q);
     q.queenDestX = bx;
     q.queenDestY = by;
     q.queenTelegraphMax = p2 ? QUEEN_BLINK_TELEGRAPH_P2 : QUEEN_BLINK_TELEGRAPH;
@@ -1601,34 +2198,6 @@ export class MonsterManager {
     q.queenBlinkTimer = p2 ? QUEEN_BLINK_IDLE_P2 : QUEEN_BLINK_IDLE;
   }
 
-  /**
-   * Past the halfway mark, everything about the blink gets bigger and shorter,
-   * and it stays that way for the rest of the fight — the last phase inherits
-   * these numbers rather than dropping the mechanic.
-   */
-  private queenLatePhase(q: Monster): boolean {
-    return q.hp <= QUEEN_PHASE2_HP;
-  }
-
-  /** Half-width of the silk thread, in the viewport it is being drawn in. */
-  private threadHalfWidth(q: Monster): number {
-    const short = Math.min(window.innerWidth, window.innerHeight);
-    const base = Math.max(
-      QUEEN_THREAD_HALF_MIN,
-      Math.min(QUEEN_THREAD_HALF_MAX, short * QUEEN_THREAD_FRAC),
-    );
-    return this.queenLatePhase(q) ? base * QUEEN_PHASE2_SPREAD : base;
-  }
-
-  /** Radius of the silk bulb around her body at each end of the blink. */
-  private auraRadius(q: Monster): number {
-    const short = Math.min(window.innerWidth, window.innerHeight);
-    const base = Math.max(
-      QUEEN_AURA_MIN,
-      Math.min(QUEEN_AURA_MAX, short * QUEEN_AURA_FRAC),
-    );
-    return this.queenLatePhase(q) ? base * QUEEN_PHASE2_SPREAD : base;
-  }
 
   /** She travels the thread. Anything still lying on it gets stuck to it. */
   private resolveBlink(q: Monster) {
@@ -1662,8 +2231,8 @@ export class MonsterManager {
     const freeze = (window as any).__yarnCursorFreezeBallAt;
     if (!getBalls || !freeze) return;
 
-    const reach = this.threadHalfWidth(q);
-    const aura = this.auraRadius(q);
+    const reach = threadHalfWidth(q);
+    const aura = auraRadius(q);
     for (const b of getBalls()) {
       const caught =
         distToSegment(b.x, b.y, x1, y1, x2, y2) <= reach + b.radius
@@ -1807,11 +2376,17 @@ export class MonsterManager {
     prevScrollY = scrollY;
 
     if (this.paused || this.gameOver) {
-      // Never leave the player's yarn pinned while the game isn't running
+      // Never leave the player's yarn pinned, or alight, while it isn't running
       for (const m of this.monsters) this.releaseWeb(m);
       this.clearSilk();
+      this.breakCombo();
       this.updateParticles(dt);
       return;
+    }
+
+    if (this.comboTimer > 0) {
+      this.comboTimer -= dt;
+      if (this.comboTimer <= 0) this.breakCombo();
     }
 
     this.spawnTimer += dt;
@@ -2319,502 +2894,13 @@ export class MonsterManager {
       if (s < 0.5) continue;
 
       ctx.save(); ctx.translate(m.x, m.y);
-      // Every colour of the creature itself goes through this, so a phased one
-      // is drawn in negative. Telegraphs and meters (a spider's web, its strain
-      // bar) deliberately do not — those belong to the game, not the monster.
-      const col = (hex: string) => (m.phased ? invertHex(hex) : hex);
       if (m.flashTimer > 0 && Math.sin(m.flashTimer * 40) > 0) ctx.globalAlpha = 0.5;
       // Boss invulnerability pulsing
       if (m.isBoss && m.bossInvulnTimer > 0) {
         ctx.globalAlpha = 0.4 + Math.sin(m.bossInvulnTimer * 20) * 0.3;
       }
 
-      if (m.isQueen) {
-        // ── Loom Queen: pixel art spider matriarch behind a web cage ──
-        const q = QUEEN_COLORS;
-        const p = s / 10;
-        const rage = m.hp <= QUEEN_PHASE3_HP;
-        const bob = Math.sin(m.wingPhase * 0.7) * p * 0.8;
-
-        // Eight arched legs, alternating their gait
-        ctx.fillStyle = q.leg;
-        for (let side = -1; side <= 1; side += 2) {
-          for (let i = 0; i < 4; i++) {
-            const a = -0.85 + i * 0.5 + Math.sin(m.wingPhase + i * 0.9) * 0.12;
-            for (let j = 1; j <= 5; j++) {
-              const r = j * p * 1.7;
-              const lx = side * Math.cos(a) * r;
-              const ly = Math.sin(a) * r - Math.sin((j / 5) * Math.PI) * p * 2.2;
-              px(lx - p * 0.55, ly - p * 0.55 + bob, p * 1.1, p * 1.1);
-            }
-          }
-        }
-
-        // Abdomen
-        ctx.fillStyle = q.body;
-        px(-3.5 * p, 0.5 * p + bob, 7 * p, 6 * p);
-        px(-2.5 * p, -0.5 * p + bob, 5 * p, 1 * p);
-        px(-2.5 * p, 6.5 * p + bob, 5 * p, 1 * p);
-        // Hourglass marking — turns red when she unravels
-        ctx.fillStyle = rage ? q.rage : q.accent;
-        px(-1 * p, 2 * p + bob, 2 * p, 1.5 * p);
-        px(-1.5 * p, 3.5 * p + bob, 3 * p, 1.5 * p);
-
-        // Head / thorax
-        ctx.fillStyle = q.body;
-        px(-2.5 * p, -4.5 * p + bob, 5 * p, 4 * p);
-        // Crown
-        ctx.fillStyle = q.accent;
-        px(-2.5 * p, -5.2 * p + bob, 5 * p, 0.8 * p);
-        px(-2.5 * p, -6.2 * p + bob, 1 * p, 1.5 * p);
-        px(-0.5 * p, -6.8 * p + bob, 1 * p, 2 * p);
-        px(1.5 * p, -6.2 * p + bob, 1 * p, 1.5 * p);
-        // Six eyes
-        ctx.fillStyle = rage ? q.rage : q.eye;
-        px(-1.8 * p, -3.8 * p + bob, 1 * p, 1 * p);
-        px(0.8 * p, -3.8 * p + bob, 1 * p, 1 * p);
-        px(-1.2 * p, -2.5 * p + bob, 0.7 * p, 0.7 * p);
-        px(0.5 * p, -2.5 * p + bob, 0.7 * p, 0.7 * p);
-        px(-2.4 * p, -2.5 * p + bob, 0.6 * p, 0.6 * p);
-        px(1.8 * p, -2.5 * p + bob, 0.6 * p, 0.6 * p);
-        if (rage) {
-          ctx.globalAlpha = 0.4 + Math.sin(time * 9) * 0.3;
-          px(-2.4 * p, -4.2 * p + bob, 2 * p, 2 * p);
-          px(0.4 * p, -4.2 * p + bob, 2 * p, 2 * p);
-          ctx.globalAlpha = 1;
-        }
-        // Fangs
-        ctx.fillStyle = "#ecf0f1";
-        px(-1.3 * p, -1.2 * p + bob, 0.7 * p, 1.4 * p);
-        px(0.6 * p, -1.2 * p + bob, 0.7 * p, 1.4 * p);
-
-        // ── The thread she is about to travel ──
-        // Same geometry the freeze check uses, in her local space. It thickens
-        // and heats up as the telegraph runs out, so "how long have I got" is
-        // readable without counting, and the landing spot is marked outright.
-        if (m.queenTelegraph > 0) {
-          const charge = 1 - m.queenTelegraph / m.queenTelegraphMax;
-          const dx = m.queenDestX - m.x;
-          const dy = m.queenDestY - m.y;
-          const len = Math.hypot(dx, dy) || 1;
-          const nx = -dy / len, ny = dx / len; // thread normal
-          const hot = charge > 0.65;
-          // Always the true collision sizes. Growing them during the telegraph
-          // would mean the safe-looking gap the player commits to is a lie.
-          const half = this.threadHalfWidth(m);
-          const aura = this.auraRadius(m);
-
-          ctx.fillStyle = hot ? q.strandHot : q.strand;
-
-          // The swept band, filled so the hazard reads as an area rather than
-          // as a line with two loose rails beside it
-          ctx.globalAlpha = 0.1 + charge * 0.18;
-          ctx.beginPath();
-          ctx.moveTo(nx * half, ny * half);
-          ctx.lineTo(dx + nx * half, dy + ny * half);
-          ctx.lineTo(dx - nx * half, dy - ny * half);
-          ctx.lineTo(-nx * half, -ny * half);
-          ctx.closePath();
-          ctx.fill();
-
-          // The bulbs she leaves from and arrives into
-          ctx.beginPath();
-          ctx.arc(0, 0, aura, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.arc(dx, dy, aura, 0, Math.PI * 2);
-          ctx.fill();
-
-          ctx.globalAlpha = 0.5 + charge * 0.5;
-          const steps = Math.max(16, Math.round(len / 10));
-          for (let i = 0; i <= steps; i++) {
-            const t = i / steps;
-            const sz = i % 2 === 0 ? 6 : 4;
-            px(dx * t - sz / 2, dy * t - sz / 2, sz, sz);
-            // Fray marking the exact edge of what will catch the yarn
-            px(dx * t + nx * half - 1.5, dy * t + ny * half - 1.5, 3, 3);
-            px(dx * t - nx * half - 1.5, dy * t - ny * half - 1.5, 3, 3);
-          }
-
-          // Dotted rims on both bulbs, at their true radius. They counter-rotate
-          // so the pair reads as one hazard being drawn tight.
-          ctx.globalAlpha = 0.6 + charge * 0.4;
-          const rim = Math.max(14, Math.round(aura / 7));
-          for (let i = 0; i < rim; i++) {
-            const a = (i / rim) * Math.PI * 2 + charge * 2.2;
-            px(Math.cos(a) * aura - 2, Math.sin(a) * aura - 2, 4, 4);
-            px(dx + Math.cos(-a) * aura - 2, dy + Math.sin(-a) * aura - 2, 4, 4);
-          }
-        }
-        ctx.globalAlpha = 1;
-
-        drawHpBar(px, ctx, s, p, Math.max(0, m.hp / m.maxHp));
-
-      } else if (m.isSnarl) {
-        // ── Snarl: little spider squatting on your yarn ──
-        const c = SNARL_COLORS[m.colorIdx];
-        const p = s / 6;
-        const strain = m.snarlStrain;
-
-        if (m.snarlAttached) {
-          ctx.fillStyle = strain > 0.6 ? SNARL_STRAIN_WARN : c.web;
-          ctx.globalAlpha = 0.35 + strain * 0.55;
-
-          // Leash to the yarn, when the web holds it at a distance (mobile)
-          const lx = m.snarlLeashX - m.x;
-          const ly = m.snarlLeashY - m.y;
-          const leash = Math.hypot(lx, ly);
-          if (leash > s) {
-            const steps = Math.min(40, Math.round(leash / 9));
-            for (let i = 1; i <= steps; i++) {
-              const t = i / steps;
-              const sag = Math.sin(t * Math.PI) * (1 - strain) * 12;
-              px(lx * t - p * 0.35, ly * t + sag - p * 0.35, p * 0.7, p * 0.7);
-            }
-          }
-
-          // Silk radiating from the bite point, shivering as strain builds
-          for (let i = 0; i < 6; i++) {
-            const a = (i / 6) * Math.PI * 2 + m.wingPhase * 0.15;
-            for (let j = 2; j <= 6; j++) {
-              const r = j * p * 1.5 * (1 + strain * 0.18 * Math.sin(time * 22 + j));
-              px(Math.cos(a) * r - p * 0.35, Math.sin(a) * r - p * 0.35, p * 0.7, p * 0.7);
-            }
-          }
-          ctx.globalAlpha = 1;
-        }
-
-        // Legs
-        ctx.fillStyle = col(c.leg);
-        for (let side = -1; side <= 1; side += 2) {
-          for (let i = 0; i < 4; i++) {
-            const a = -0.8 + i * 0.5 + Math.sin(m.wingPhase * 1.5 + i) * 0.15;
-            for (let j = 1; j <= 3; j++) {
-              const r = j * p * 1.3;
-              const lx = side * Math.cos(a) * r;
-              const ly = Math.sin(a) * r - Math.sin((j / 3) * Math.PI) * p * 1.1;
-              px(lx - p * 0.4, ly - p * 0.4, p * 0.8, p * 0.8);
-            }
-          }
-        }
-        // Body
-        ctx.fillStyle = col(c.body);
-        px(-1.5 * p, -0.4 * p, 3 * p, 3.2 * p);
-        px(-1 * p, -2.2 * p, 2 * p, 1.9 * p);
-        ctx.fillStyle = col(c.eye);
-        px(-0.85 * p, -1.8 * p, 0.6 * p, 0.6 * p);
-        px(0.25 * p, -1.8 * p, 0.6 * p, 0.6 * p);
-
-        // Wind-up telegraph: a closing ring showing exactly how far the web can
-        // reach. Get the yarn outside it before it snaps shut and nothing happens.
-        if (m.snarlWindup > 0) {
-          const t = 1 - m.snarlWindup / SNARL_WINDUP;
-          const ringR = SNARL_ATTACH_RANGE * (1 - t * 0.25);
-          ctx.fillStyle = SNARL_STRAIN_WARN;
-          ctx.globalAlpha = 0.45 + t * 0.5;
-          const dots = 54;
-          for (let i = 0; i < dots; i++) {
-            // Dashes sweep round as it charges, so the ring reads as tightening
-            const a = (i / dots) * Math.PI * 2 + t * 0.8;
-            const d = 4 + t * 3;
-            px(Math.cos(a) * ringR - d / 2, Math.sin(a) * ringR - d / 2, d, d);
-          }
-          // Spokes reeling inward, pointing at what is about to be grabbed
-          ctx.globalAlpha = 0.25 + t * 0.45;
-          for (let i = 0; i < 6; i++) {
-            const a = (i / 6) * Math.PI * 2 - t * 1.2;
-            for (let j = 3; j <= 7; j++) {
-              const r = ringR * (j / 8) * (1 - t * 0.2);
-              px(Math.cos(a) * r - 2, Math.sin(a) * r - 2, 4, 4);
-            }
-          }
-          ctx.globalAlpha = 1;
-        }
-
-        // Strain meter — shown from the moment it latches, so the answer to
-        // "what do I do?" is on screen rather than in a hint that already faded
-        if (m.snarlAttached) {
-          const bw = s * 2.2;
-          const by = -s * 1.7;
-          ctx.fillStyle = "#2c3e50";
-          px(-bw / 2 - 1, by - 1, bw + 2, 7);
-          ctx.fillStyle = "#ecf0f1";
-          px(-bw / 2, by, bw, 5);
-          ctx.fillStyle = strain > 0.66 ? SNARL_STRAIN_WARN : strain > 0.33 ? "#f1c40f" : "#e67e22";
-          px(-bw / 2, by, bw * strain, 5);
-        }
-
-      } else if (m.isBoss) {
-        // ── Boss: large pixel art demon moth ──
-        const bc = BOSS_COLORS[m.colorIdx];
-        const p = s / 10; // finer pixel grid for bigger creature
-        const wingUp = Math.sin(m.wingPhase) * 0.5;
-        const bob = Math.sin(m.wingPhase * 0.7) * p * 0.8;
-        const bossPhase2 = m.hp <= BOSS_HP / 2;
-
-        // Massive wings — 4 wing segments, layered
-        ctx.fillStyle = bc.wing;
-        // Outer wings
-        px(-8 * p, (-2 + wingUp) * p + bob, 4 * p, 6 * p);
-        px(-7 * p, (-5 + wingUp) * p + bob, 3 * p, 3 * p);
-        px(-6 * p, (-7 + wingUp) * p + bob, 2 * p, 2 * p);
-        px(4 * p, (-2 + wingUp) * p + bob, 4 * p, 6 * p);
-        px(4 * p, (-5 + wingUp) * p + bob, 3 * p, 3 * p);
-        px(4 * p, (-7 + wingUp) * p + bob, 2 * p, 2 * p);
-        // Inner wing detail
-        ctx.fillStyle = bossPhase2 ? "#c0392b" : bc.body;
-        px(-7 * p, (-1 + wingUp) * p + bob, 2 * p, 4 * p);
-        px(5 * p, (-1 + wingUp) * p + bob, 2 * p, 4 * p);
-
-        // Large body
-        ctx.fillStyle = bc.body;
-        px(-4 * p, -5 * p + bob, 8 * p, 10 * p);
-        px(-3 * p, -6 * p + bob, 6 * p, 1 * p);
-        px(-3 * p, 5 * p + bob, 6 * p, 1.5 * p);
-        // Shoulder pads
-        px(-5 * p, -4 * p + bob, 1.5 * p, 3 * p);
-        px(3.5 * p, -4 * p + bob, 1.5 * p, 3 * p);
-
-        // Armor plating — heavy
-        ctx.fillStyle = "#2c3e50";
-        px(-3 * p, -4 * p + bob, 6 * p, 2 * p);
-        px(-3.5 * p, -2 * p + bob, 1.5 * p, 5 * p);
-        px(2 * p, -2 * p + bob, 1.5 * p, 5 * p);
-        // Crown / horns
-        ctx.fillStyle = bc.accent;
-        px(-2 * p, -7 * p + bob, 1.5 * p, 2 * p);
-        px(0.5 * p, -7 * p + bob, 1.5 * p, 2 * p);
-        px(-3 * p, -6.5 * p + bob, 1 * p, 1.5 * p);
-        px(2 * p, -6.5 * p + bob, 1 * p, 1.5 * p);
-
-        // Eyes — larger, menacing
-        ctx.fillStyle = "#1a1a2e";
-        px(-2.5 * p, -3 * p + bob, 2 * p, 2 * p);
-        px(0.5 * p, -3 * p + bob, 2 * p, 2 * p);
-        ctx.fillStyle = bc.eye;
-        px(-2 * p, -2.5 * p + bob, 1.2 * p, 1.2 * p);
-        px(1 * p, -2.5 * p + bob, 1.2 * p, 1.2 * p);
-        // Eye glow in phase 2
-        if (bossPhase2) {
-          ctx.fillStyle = "#e74c3c";
-          ctx.globalAlpha = 0.5 + Math.sin(time * 8) * 0.3;
-          px(-2.5 * p, -3.5 * p + bob, 2.5 * p, 2.5 * p);
-          px(0.3 * p, -3.5 * p + bob, 2.5 * p, 2.5 * p);
-          ctx.globalAlpha = m.bossInvulnTimer > 0 ? 0.4 + Math.sin(m.bossInvulnTimer * 20) * 0.3 : (m.flashTimer > 0 ? 0.5 : 1);
-        }
-
-        // Mouth — wide gash
-        ctx.fillStyle = "#1a1a2e";
-        px(-2 * p, 1 * p + bob, 4 * p, 2 * p);
-        ctx.fillStyle = bc.accent;
-        // Fangs
-        px(-1.5 * p, 0.5 * p + bob, 0.8 * p, 1 * p);
-        px(0.8 * p, 0.5 * p + bob, 0.8 * p, 1 * p);
-        px(-0.5 * p, 2.5 * p + bob, 0.8 * p, 0.8 * p);
-
-        // Tail / lower body detail
-        ctx.fillStyle = bc.wing;
-        px(-1.5 * p, 6 * p + bob, 3 * p, 1.5 * p);
-        px(-1 * p, 7 * p + bob, 2 * p, 1 * p);
-
-        // Trail particles — bigger, more
-        ctx.fillStyle = bc.wing; ctx.globalAlpha = 0.3;
-        for (let i = 0; i < 6; i++) {
-          const tx = Math.sin(time * 2.5 + i * 1.2 + m.wingPhase) * s * 1.1;
-          const ty = Math.cos(time * 1.8 + i * 2.0 + m.wingPhase) * s * 0.5 + s * 1.1;
-          ctx.fillRect(tx - p * 0.8, ty - p * 0.8, p * 1.6, p * 1.6);
-        }
-        ctx.globalAlpha = m.bossInvulnTimer > 0 ? 0.4 + Math.sin(m.bossInvulnTimer * 20) * 0.3 : (m.flashTimer > 0 ? 0.5 : 1);
-
-        // ── Boss shield: 7/8 segments, 1 open ──
-        const shieldR = s * 1.6;
-        for (let i = 0; i < 8; i++) {
-          if (!isPlatedSegment(m, i)) continue; // the opening
-          const segAngle = m.shieldAngle + i * (Math.PI / 4);
-          const flash = m.shieldFlash[i] > 0;
-          ctx.fillStyle = flash ? BOSS_SHIELD_GLOW : BOSS_SHIELD_COLOR;
-          ctx.globalAlpha = flash ? 0.95 : (m.bossInvulnTimer > 0 ? 0.9 : 0.65);
-          // 4 pixel blocks per segment for larger shield
-          for (let j = -1.5; j <= 1.5; j++) {
-            const a = segAngle + j * (Math.PI / 20);
-            const bx = Math.cos(a) * shieldR;
-            const by = Math.sin(a) * shieldR;
-            px(bx - p * 0.8, by - p * 0.8, p * 1.6, p * 1.6);
-          }
-        }
-        ctx.globalAlpha = 1;
-
-        drawHpBar(px, ctx, s, p, Math.max(0, m.hp / m.maxHp));
-
-      } else if (m.isShielded) {
-        // ── Shielded: bulky pixel art moth with shield plates ──
-        const sc = MONSTER_COLORS[m.colorIdx];
-        const p = s / 7;
-        const wingUp = Math.sin(m.wingPhase) * 0.4;
-
-        // Wings — wider and thicker than regular moth
-        ctx.fillStyle = sc.wing;
-        px(-5.5 * p, (-1 + wingUp) * p, 3 * p, 4 * p);
-        px(-4.5 * p, (-3 + wingUp) * p, 2 * p, 2 * p);
-        px(2.5 * p, (-1 + wingUp) * p, 3 * p, 4 * p);
-        px(2.5 * p, (-3 + wingUp) * p, 2 * p, 2 * p);
-
-        // Body — wider and taller
-        ctx.fillStyle = sc.body;
-        px(-3 * p, -3 * p, 6 * p, 7 * p);
-        px(-2 * p, -4 * p, 4 * p, 1 * p);
-        px(-2 * p, 4 * p, 4 * p, 1 * p);
-        // Armor plates on body
-        ctx.fillStyle = "#5d6d7e";
-        px(-2.5 * p, -2 * p, 1 * p, 4 * p);
-        px(1.5 * p, -2 * p, 1 * p, 4 * p);
-        px(-1 * p, -3.5 * p, 2 * p, 1 * p);
-        px(-1 * p, 3 * p, 2 * p, 1 * p);
-
-        // Eyes
-        ctx.fillStyle = sc.eye;
-        px(-1.5 * p, -2 * p, 1.2 * p, 1.2 * p);
-        px(0.5 * p, -2 * p, 1.2 * p, 1.2 * p);
-        // Mouth
-        ctx.fillStyle = "#2c3e50";
-        px(-1.2 * p, 0.5 * p, 2.4 * p, 1.2 * p);
-        ctx.fillStyle = "#ecf0f1";
-        const eating = m.eatingTimer > 0.3;
-        const jawOpen = eating ? Math.abs(Math.sin(m.eatingTimer * 12)) * p * 1 : 0;
-        px(-0.8 * p, 0.5 * p + jawOpen, 0.6 * p, 0.6 * p);
-        px(0.3 * p, 0.5 * p + jawOpen, 0.6 * p, 0.6 * p);
-
-        // Trail particles (same as moth)
-        ctx.fillStyle = sc.wing; ctx.globalAlpha = 0.35;
-        for (let i = 0; i < 4; i++) {
-          const tx = Math.sin(time * 3.5 + i * 1.8 + m.wingPhase) * s * 0.9;
-          const ty = Math.cos(time * 2.5 + i * 2.5 + m.wingPhase) * s * 0.4 + s;
-          ctx.fillRect(tx - p * 0.6, ty - p * 0.6, p * 1.2, p * 1.2);
-        }
-        ctx.globalAlpha = 1;
-
-        // ── Shield segments ──
-        const shieldR = s * 1.4;
-
-        for (let i = 0; i < 8; i++) {
-          if (!isPlatedSegment(m, i)) continue;
-          const segAngle = m.shieldAngle + i * (Math.PI / 4);
-          const flash = m.shieldFlash[i] > 0;
-          ctx.fillStyle = flash ? SHIELDED_SHIELD_GLOW : SHIELDED_SHIELD_COLOR;
-          ctx.globalAlpha = flash ? 0.95 : 0.7;
-          // Draw 3 pixel blocks per segment in an arc
-          for (let j = -1; j <= 1; j++) {
-            const a = segAngle + j * (Math.PI / 16);
-            const bx = Math.cos(a) * shieldR;
-            const by = Math.sin(a) * shieldR;
-            px(bx - p * 0.6, by - p * 0.6, p * 1.2, p * 1.2);
-          }
-        }
-      } else if (m.isShooter) {
-        // ── Shooter: pixel art floating eye turret ──
-        const sc = SHOOTER_COLORS[m.colorIdx];
-        const p = s / 7;
-        const bob = Math.sin(m.wingPhase) * p * 0.5;
-
-        // Charge glow (pixel squares around body when about to fire)
-        const chargeT = 1 - Math.min(1, m.shootCooldown / SHOOTER_CHARGE_TIME);
-        if (chargeT > 0) {
-          ctx.fillStyle = col(sc.ring);
-          ctx.globalAlpha = chargeT * 0.5;
-          const glow = Math.floor(chargeT * 3) + 1;
-          for (let i = 0; i < 4; i++) {
-            const ga = (i / 4) * Math.PI * 2 + m.wingPhase;
-            const gr = (3.5 + glow) * p;
-            px(Math.cos(ga) * gr - p * 0.4, Math.sin(ga) * gr - p * 0.4 + bob, p * 0.8, p * 0.8);
-          }
-          ctx.globalAlpha = m.flashTimer > 0 ? 0.5 : 1;
-        }
-
-        // Body: blocky hexagonal shape
-        ctx.fillStyle = col(sc.body);
-        px(-2.5 * p, -1.5 * p + bob, 5 * p, 3 * p); // wide center
-        px(-1.5 * p, -2.5 * p + bob, 3 * p, 1 * p); // top
-        px(-1.5 * p, 1.5 * p + bob, 3 * p, 1 * p);  // bottom
-
-        // Dark inner
-        ctx.fillStyle = col("#1a1a2e");
-        px(-1.5 * p, -1 * p + bob, 3 * p, 2.5 * p);
-
-        // Eye white
-        ctx.fillStyle = col("#ecf0f1");
-        px(-1 * p, -0.5 * p + bob, 2 * p, 1.5 * p);
-
-        // Pupil — tracks target
-        let pupilDx = 0, pupilDy = 0;
-        if (m.targetEl) {
-          const tRect = getCachedRect(m.targetEl);
-          const angle = Math.atan2(
-            tRect.top + tRect.height / 2 - m.y,
-            tRect.left + tRect.width / 2 - m.x,
-          );
-          pupilDx = Math.cos(angle) * p * 0.4;
-          pupilDy = Math.sin(angle) * p * 0.4;
-        }
-        ctx.fillStyle = col(sc.eye);
-        px(-0.5 * p + pupilDx, -0.2 * p + bob + pupilDy, 1 * p, 1 * p);
-        // Highlight
-        ctx.fillStyle = col("#ecf0f1");
-        px(-0.5 * p + pupilDx + p * 0.15, -0.2 * p + bob + pupilDy + p * 0.1, p * 0.3, p * 0.3);
-
-        // "Legs" / antenna — small pixel appendages
-        ctx.fillStyle = col(sc.ring);
-        px(-3 * p, -0.5 * p + bob, 0.8 * p, 0.8 * p); // left
-        px(2.2 * p, -0.5 * p + bob, 0.8 * p, 0.8 * p); // right
-        px(-0.4 * p, 2.5 * p + bob, 0.8 * p, 0.8 * p); // bottom barrel
-
-        // HP pips above
-        if (m.hp > 1) {
-          ctx.fillStyle = col(sc.ring);
-          for (let i = 0; i < m.hp; i++) {
-            const pipX = -((m.hp - 1) * p * 0.8) / 2 + i * p * 0.8;
-            px(pipX - p * 0.3, -3.5 * p + bob, p * 0.6, p * 0.5);
-          }
-        }
-      } else {
-        // ── Moth: original pixel art ──
-        const c = MONSTER_COLORS[m.colorIdx];
-        const p = s / 7;
-        const wingUp = Math.sin(m.wingPhase) * 0.6;
-        ctx.fillStyle = col(c.wing);
-        px(-4.5 * p, (-1 + wingUp) * p, 2.5 * p, 3.5 * p);
-        px(-3.5 * p, (-2.5 + wingUp) * p, 1.5 * p, 1.5 * p);
-        px(2 * p, (-1 + wingUp) * p, 2.5 * p, 3.5 * p);
-        px(2 * p, (-2.5 + wingUp) * p, 1.5 * p, 1.5 * p);
-        ctx.fillStyle = col(c.body);
-        px(-2.5 * p, -2.5 * p, 5 * p, 6 * p);
-        px(-1.5 * p, -3.5 * p, 3 * p, 1 * p);
-        px(-1.5 * p, 3.5 * p, 3 * p, 1 * p);
-
-        if (m.isBig && m.hp > 1) {
-          ctx.fillStyle = col("#e74c3c");
-          for (let i = 0; i < m.hp; i++) {
-            const pipX = -((m.hp - 1) * p * 0.8) / 2 + i * p * 0.8;
-            ctx.fillRect(pipX - p * 0.3, -4 * p, p * 0.6, p * 0.5);
-          }
-        }
-
-        ctx.fillStyle = col(c.eye);
-        px(-1.5 * p, -1.5 * p, 1.2 * p, 1.2 * p);
-        px(0.5 * p, -1.5 * p, 1.2 * p, 1.2 * p);
-        ctx.fillStyle = col("#2c3e50");
-        px(-1.2 * p, 1 * p, 2.4 * p, 1.2 * p);
-        ctx.fillStyle = col("#ecf0f1");
-        const eating = m.eatingTimer > 0.3;
-        const jawOpen = eating ? Math.abs(Math.sin(m.eatingTimer * 12)) * p * 1.2 : 0;
-        px(-0.8 * p, 1 * p + jawOpen, 0.6 * p, 0.6 * p);
-        px(0.3 * p, 1 * p + jawOpen, 0.6 * p, 0.6 * p);
-        ctx.fillStyle = col(c.wing); ctx.globalAlpha = 0.35;
-        for (let i = 0; i < 4; i++) {
-          const tx = Math.sin(time * 3.5 + i * 1.8 + m.wingPhase) * s * 0.9;
-          const ty = Math.cos(time * 2.5 + i * 2.5 + m.wingPhase) * s * 0.4 + s;
-          ctx.fillRect(tx - p * 0.6, ty - p * 0.6, p * 1.2, p * 1.2);
-        }
-      }
+      drawMonsterSprite(ctx, m, s, time);
 
       // ── Phase: a field that is losing its grip on the monster ──
       // A Dune body shield: a hard-edged box of chunky blocks standing off the
@@ -2973,6 +3059,7 @@ export class MonsterManager {
     const releaseAll = (window as any).__yarnCursorReleaseAllWebs;
     if (releaseAll) releaseAll();
     this.clearSilk();
+    this.breakCombo();
     for (const m of this.monsters) {
       if (m.targetEl) (m.targetEl as HTMLElement).style.transform = "";
     }
