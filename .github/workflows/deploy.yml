@@ -3,6 +3,9 @@ name: Deploy to Hetzner
 on:
   push:
     branches: [main, upgrades]
+  # A new release of the Chult journal (LiquidFun/chult-journal) needs a rebuild but no commit here: Actions → Run
+  # workflow. (The prebuild step downloads the latest release.)
+  workflow_dispatch:
 
 concurrency:
   # Two deploys rsyncing into the same directory would interleave file writes,

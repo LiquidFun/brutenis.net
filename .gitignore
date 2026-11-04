@@ -27,6 +27,7 @@ public/ctf-assets/
 public/images/projects/
 public/images/games/
 public/photos/
+public/chult/
 
 # downloaded + re-encoded Immich renditions, restored from cache in CI
 .cache/
